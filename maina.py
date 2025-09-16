@@ -4,10 +4,13 @@ from configuration import collection
 from models import User, LoginUser
 from datetime import datetime
 from bson.objectid import ObjectId
-import bcrypt
+from passlib.context import CryptContext
 
 app = FastAPI()
 user_router = APIRouter(prefix="/users", tags=["Users"])
+
+# Password hashing context (passlib)
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # ------------------ SIGN IN ------------------
 @user_router.post("/signin")
@@ -16,8 +19,8 @@ async def signin_user(login_user: LoginUser):
     if not user_in_db:
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
-    # Check password (hash compare)
-    if not bcrypt.checkpw(login_user.password.encode("utf-8"), user_in_db["password"]):
+    # Verify hashed password
+    if not pwd_context.verify(login_user.password, user_in_db["password"]):
         return JSONResponse(
             status_code=401,
             content={"status_code": 401, "message": "Invalid email or password"}
@@ -44,9 +47,8 @@ async def register_user(new_user: User):
         user_dict = new_user.model_dump()
         user_dict["created_at"] = datetime.utcnow()
 
-        # hash password before saving
-        hashed_pw = bcrypt.hashpw(new_user.password.encode("utf-8"), bcrypt.gensalt())
-        user_dict["password"] = hashed_pw
+        # Hash password before saving
+        user_dict["password"] = pwd_context.hash(new_user.password)
 
         resp = collection.insert_one(user_dict)
         return {
