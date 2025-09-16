@@ -8,3 +8,6 @@ class User(BaseModel):
     email: EmailStr
     password: str   # in real apps, store hashed password
     created_at: Optional[datetime] = None
+class LoginUser(BaseModel):
+    email: EmailStr
+    password: str
