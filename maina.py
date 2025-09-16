@@ -13,9 +13,7 @@ async def signin_user(login_user: LoginUser):
     if not user_in_db:
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
-    # If passwords are hashed, use bcrypt.verify(login_user.password, user_in_db["password"])
-    if login_user.password != user_in_db["password"]:  # plain password check
-        raise HTTPException(status_code=401, detail="Invalid email or password")
+    # If passwords are hashed, use bcrypt.verify(login_user.password, user_in_db["password"
     if not bcrypt.verify(login_user.password, user_in_db["password"]):
         return JSONResponse(
             status_code=401,
