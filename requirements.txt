@@ -3,3 +3,4 @@ uvicorn
 pymongo
 pydantic[email]
 python-dotenv
+passlib[bcrypt]
