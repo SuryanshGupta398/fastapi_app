@@ -1,6 +1,7 @@
 from fastapi import FastAPI, APIRouter, HTTPException
 from configuration import collection
 from models import User
+from models import LoginUser
 from datetime import datetime
 from bson.objectid import ObjectId
 
