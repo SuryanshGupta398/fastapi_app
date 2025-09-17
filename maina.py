@@ -14,7 +14,7 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # ------------------ Email Config ------------------
 conf = ConnectionConfig(
-    MAIL_USERNAME=os.getenv("MAIL_USERNAME", "your_email@gmail.com"),
+    MAIL_USERNAME=os.getenv("MAIL_USERNAME", "guptajisuryansh286@gmail.com"),
     MAIL_PASSWORD=os.getenv("MAIL_PASSWORD", "gceq mwac lcqy qytd"),  # use App Password if Gmail
     MAIL_FROM=os.getenv("MAIL_FROM", "guptajisuryansh286@gmail.com"),
     MAIL_PORT=587,
@@ -55,46 +55,43 @@ async def signin_user(login_user: LoginUser):
 @user_router.post("/register")
 async def register_user(new_user: User):
     try:
+        # check existing
         if collection.find_one({"username": new_user.username}):
-            return JSONResponse(
-                status_code=400,
-                content={"status_code": 400, "message": "Username already taken"}
-            )
+            return JSONResponse(status_code=400, content={"message": "Username already taken"})
         if collection.find_one({"email": new_user.email}):
-            return JSONResponse(
-                status_code=400,
-                content={"status_code": 400, "message": "Email already registered"}
-            )
+            return JSONResponse(status_code=400, content={"message": "Email already registered"})
 
+        # hash password and save
         user_dict = new_user.model_dump()
         user_dict["created_at"] = datetime.utcnow()
         user_dict["password"] = pwd_context.hash(new_user.password)
-
         resp = collection.insert_one(user_dict)
 
-        # --------- Send Welcome Email ---------
+        # 📧 send welcome email
         message = MessageSchema(
-            subject="🎉 Welcome to FNDS2!",
-            recipients=[new_user.email],
-            body=f"Hello {new_user.full_name},\n\nYour account has been created successfully.\n\nThanks for joining us 🚀",
-            subtype="plain"
+            subject="Welcome to My App 🎉",
+            recipients=[new_user.email],   # send to the registered user
+            body=f"""
+                <h2>Hello {new_user.full_name},</h2>
+                <p>Thank you for registering with us!</p>
+                <p>Your username is: <b>{new_user.username}</b></p>
+                <br>
+                <p>We’re glad to have you onboard 🚀</p>
+            """,
+            subtype=MessageType.html
         )
+
         fm = FastMail(conf)
         await fm.send_message(message)
 
         return JSONResponse(
             status_code=200,
-            content={
-                "status_code": 200,
-                "id": str(resp.inserted_id),
-                "message": "User registered successfully & welcome email sent ✅"
-            }
+            content={"status": "success", "id": str(resp.inserted_id), "message": "User registered successfully and email sent"}
         )
+
     except Exception as e:
-        return JSONResponse(
-            status_code=500,
-            content={"status_code": 500, "message": f"Some error occurred: {str(e)}"}
-        )
+        return JSONResponse(status_code=500, content={"message": f"Error: {str(e)}"})
+
 
 # ------------------ DELETE ------------------
 @user_router.delete("/delete/{email}")
