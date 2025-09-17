@@ -4,7 +4,8 @@ from configuration import collection
 from models import User, LoginUser
 from datetime import datetime
 from passlib.context import CryptContext
-from fastapi_mail import FastMail, MessageSchema, ConnectionConfig
+from fastapi_mail import FastMail, MessageSchema, ConnectionConfig, MessageType
+
 import os
 
 app = FastAPI()
