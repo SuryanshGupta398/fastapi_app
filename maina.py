@@ -72,6 +72,11 @@ async def register_user(new_user: User):
             status_code=500,
             content={"status_code": 500, "message": f"Some error occurred: {str(e)}"}
         )
-
+@user_router.delete("/delete/{email}")
+async def delete_user(email: str):
+    result = collection.delete_one({"email": email})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"status": "success", "message": "Account deleted"}
 
 app.include_router(user_router)
