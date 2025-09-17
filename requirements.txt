@@ -4,3 +4,4 @@ pymongo
 pydantic[email]
 python-dotenv
 passlib[bcrypt]
+fastapi-mail
