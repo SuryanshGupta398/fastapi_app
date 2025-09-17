@@ -15,8 +15,8 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 # ------------------ Email Config ------------------
 conf = ConnectionConfig(
     MAIL_USERNAME=os.getenv("MAIL_USERNAME", "your_email@gmail.com"),
-    MAIL_PASSWORD=os.getenv("MAIL_PASSWORD", "your_app_password"),  # use App Password if Gmail
-    MAIL_FROM=os.getenv("MAIL_FROM", "your_email@gmail.com"),
+    MAIL_PASSWORD=os.getenv("MAIL_PASSWORD", "gceq mwac lcqy qytd"),  # use App Password if Gmail
+    MAIL_FROM=os.getenv("MAIL_FROM", "guptajisuryansh286@gmail.com"),
     MAIL_PORT=587,
     MAIL_SERVER="smtp.gmail.com",
     MAIL_TLS=True,
