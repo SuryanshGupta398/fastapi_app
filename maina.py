@@ -3,13 +3,26 @@ from fastapi.responses import JSONResponse
 from configuration import collection
 from models import User, LoginUser
 from datetime import datetime
-from bson.objectid import ObjectId
 from passlib.context import CryptContext
+from fastapi_mail import FastMail, MessageSchema, ConnectionConfig
+import os
 
 app = FastAPI()
 user_router = APIRouter(prefix="/users", tags=["Users"])
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# ------------------ Email Config ------------------
+conf = ConnectionConfig(
+    MAIL_USERNAME=os.getenv("MAIL_USERNAME", "your_email@gmail.com"),
+    MAIL_PASSWORD=os.getenv("MAIL_PASSWORD", "your_app_password"),  # use App Password if Gmail
+    MAIL_FROM=os.getenv("MAIL_FROM", "your_email@gmail.com"),
+    MAIL_PORT=587,
+    MAIL_SERVER="smtp.gmail.com",
+    MAIL_TLS=True,
+    MAIL_SSL=False,
+    USE_CREDENTIALS=True
+)
 
 # ------------------ SIGN IN ------------------
 @user_router.post("/signin")
@@ -59,12 +72,22 @@ async def register_user(new_user: User):
 
         resp = collection.insert_one(user_dict)
 
+        # --------- Send Welcome Email ---------
+        message = MessageSchema(
+            subject="🎉 Welcome to FNDS2!",
+            recipients=[new_user.email],
+            body=f"Hello {new_user.full_name},\n\nYour account has been created successfully.\n\nThanks for joining us 🚀",
+            subtype="plain"
+        )
+        fm = FastMail(conf)
+        await fm.send_message(message)
+
         return JSONResponse(
             status_code=200,
             content={
                 "status_code": 200,
                 "id": str(resp.inserted_id),
-                "message": "User registered successfully"
+                "message": "User registered successfully & welcome email sent ✅"
             }
         )
     except Exception as e:
@@ -72,6 +95,8 @@ async def register_user(new_user: User):
             status_code=500,
             content={"status_code": 500, "message": f"Some error occurred: {str(e)}"}
         )
+
+# ------------------ DELETE ------------------
 @user_router.delete("/delete/{email}")
 async def delete_user(email: str):
     result = collection.delete_one({"email": email})
