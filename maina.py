@@ -67,27 +67,27 @@ async def register_user(new_user: User):
             recipients=[new_user.email],
             body=f"""
                 <h2>Hello {new_user.full_name},</h2>
-                Thank you for signing up with Fake News Detector ! We’re excited to have you join our mission of making the internet a safer and more reliable place.
+                <p>Thank you for signing up with Fake News Detector ! We’re excited to have you join our mission of making the internet a safer and more reliable place.</p>
+                <br>
+                <p>With Fake News Detector , you can:</p><br>
+                ✅ Instantly check if a news article is genuine or misleading<br>
+✅ Stay updated with verified news sources<br>
+✅ Report suspicious content and help others avoid misinformation<br>
+✅ Be part of a growing community that values truth and transparency<br>
 
-With Fake News Detector , you can:
-✅ Instantly check if a news article is genuine or misleading
-✅ Stay updated with verified news sources
-✅ Report suspicious content and help others avoid misinformation
-✅ Be part of a growing community that values truth and transparency
-
-Whether you’re a student, researcher, or just someone who wants to know the facts, our app gives you the tools you need to separate fact from fiction.
+<p>Whether you’re a student, researcher, or just someone who wants to know the facts, our app gives you the tools you need to separate fact from fiction.</p>
 
 What’s next?
-
+<br>
 Open the app and explore your dashboard
-
+<br>
 Try scanning your first news article
-
+<br>
 Share the app with friends and family so they can stay safe too
-
+<br>
 Together, we can make a real difference against the spread of fake news.
 Welcome once again, and thank you for trusting us.
-
+<br>
 Best regards,
 The Multiverse Team
             """,
