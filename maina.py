@@ -146,14 +146,21 @@ async def reset_password(request: ResetPasswordRequest):
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    if "reset_otp" not in user or "reset_expiry" not in user:
+    # Check if OTP and expiry exist
+    otp_in_db = user.get("reset_otp")
+    expiry_in_db = user.get("reset_expiry")
+
+    if not otp_in_db or not expiry_in_db:
         raise HTTPException(status_code=400, detail="OTP not generated")
 
-    if datetime.utcnow() > user["reset_expiry"]:
+    if datetime.utcnow() > expiry_in_db:
         raise HTTPException(status_code=400, detail="OTP expired")
 
-    if request.otp != user["reset_otp"]:
+    if request.otp != otp_in_db:
         raise HTTPException(status_code=400, detail="Invalid OTP")
+
+    if not request.new_password:
+        raise HTTPException(status_code=400, detail="New password cannot be empty")
 
     hashed_password = str(pwd_context.hash(request.new_password))
     collection.update_one(
