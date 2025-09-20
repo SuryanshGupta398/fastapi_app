@@ -146,12 +146,18 @@ async def reset_password(request: ResetPasswordRequest):
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Check if OTP and expiry exist
     otp_in_db = user.get("reset_otp")
     expiry_in_db = user.get("reset_expiry")
 
     if not otp_in_db or not expiry_in_db:
-        raise HTTPException(status_code=400, detail="OTP not generated")
+        raise HTTPException(status_code=400, detail="OTP not generated or already used")
+
+    # If expiry_in_db is string instead of datetime → parse it
+    if isinstance(expiry_in_db, str):
+        try:
+            expiry_in_db = datetime.fromisoformat(expiry_in_db)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid OTP expiry format")
 
     if datetime.utcnow() > expiry_in_db:
         raise HTTPException(status_code=400, detail="OTP expired")
@@ -165,11 +171,13 @@ async def reset_password(request: ResetPasswordRequest):
     hashed_password = str(pwd_context.hash(request.new_password))
     collection.update_one(
         {"email": email},
-        {"$set": {"password": hashed_password}, "$unset": {"reset_otp": "", "reset_expiry": ""}}
+        {
+            "$set": {"password": hashed_password},
+            "$unset": {"reset_otp": "", "reset_expiry": ""}
+        }
     )
 
     return {"status": "success", "message": "Password reset successfully"}
-
 
 # ------------------ DELETE ------------------
 @user_router.delete("/delete/{email}")
