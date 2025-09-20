@@ -148,13 +148,19 @@ async def reset_password(email: str, otp: str, new_password: str):
     if otp != user["reset_otp"]:
         raise HTTPException(status_code=400, detail="Invalid OTP")
 
-    hashed_password = pwd_context.hash(new_password)
+    # ✅ Always ensure string
+    hashed_password = str(pwd_context.hash(new_password))
+
     collection.update_one(
         {"email": email},
-        {"$set": {"password": hashed_password}, "$unset": {"reset_otp": "", "reset_expiry": ""}}
+        {
+            "$set": {"password": hashed_password},
+            "$unset": {"reset_otp": "", "reset_expiry": ""}
+        }
     )
 
     return {"status": "success", "message": "Password reset successfully"}
+
 
 # ------------------ DELETE ------------------
 @user_router.delete("/delete/{email}")
