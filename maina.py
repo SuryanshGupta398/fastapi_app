@@ -142,6 +142,12 @@ async def forgot_password(request: ForgotPasswordRequest):
 @user_router.post("/reset-password")
 async def reset_password(request: ResetPasswordRequest):
     email = request.email.strip().lower()
+    otp = request.otp
+    new_password = request.new_password
+
+    if not email or not otp or not new_password:
+        raise HTTPException(status_code=400, detail="Email, OTP and new password are required")
+
     user = collection.find_one({"email": email})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -152,29 +158,19 @@ async def reset_password(request: ResetPasswordRequest):
     if not otp_in_db or not expiry_in_db:
         raise HTTPException(status_code=400, detail="OTP not generated or already used")
 
-    # If expiry_in_db is string instead of datetime → parse it
     if isinstance(expiry_in_db, str):
-        try:
-            expiry_in_db = datetime.fromisoformat(expiry_in_db)
-        except Exception:
-            raise HTTPException(status_code=400, detail="Invalid OTP expiry format")
+        expiry_in_db = datetime.fromisoformat(expiry_in_db)
 
     if datetime.utcnow() > expiry_in_db:
         raise HTTPException(status_code=400, detail="OTP expired")
 
-    if request.otp != otp_in_db:
+    if otp != otp_in_db:
         raise HTTPException(status_code=400, detail="Invalid OTP")
 
-    if not request.new_password:
-        raise HTTPException(status_code=400, detail="New password cannot be empty")
-
-    hashed_password = str(pwd_context.hash(request.new_password))
+    hashed_password = str(pwd_context.hash(new_password))
     collection.update_one(
         {"email": email},
-        {
-            "$set": {"password": hashed_password},
-            "$unset": {"reset_otp": "", "reset_expiry": ""}
-        }
+        {"$set": {"password": hashed_password}, "$unset": {"reset_otp": "", "reset_expiry": ""}}
     )
 
     return {"status": "success", "message": "Password reset successfully"}
