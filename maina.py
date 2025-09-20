@@ -1,5 +1,6 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Query
+from fastapi import FastAPI, APIRouter, HTTPException
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, EmailStr
 from configuration import collection
 from models import User, LoginUser
 from datetime import datetime, timedelta
@@ -26,10 +27,20 @@ conf = ConnectionConfig(
 
 fm = FastMail(conf)
 
+# ------------------ REQUEST MODELS ------------------
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+class ResetPasswordRequest(BaseModel):
+    email: EmailStr
+    otp: str
+    new_password: str
+
+
 # ------------------ SIGN IN ------------------
 @user_router.post("/signin")
 async def signin_user(login_user: LoginUser):
-    user_in_db = collection.find_one({"email": login_user.email})
+    user_in_db = collection.find_one({"email": login_user.email.strip().lower()})
     if not user_in_db:
         return JSONResponse(status_code=401, content={"message": "Invalid email or password"})
 
@@ -47,10 +58,14 @@ async def signin_user(login_user: LoginUser):
         }
     )
 
+
 # ------------------ REGISTER ------------------
 @user_router.post("/register")
 async def register_user(new_user: User):
     try:
+        # normalize email
+        new_user.email = new_user.email.strip().lower()
+
         if collection.find_one({"username": new_user.username}):
             return JSONResponse(status_code=400, content={"message": "Username already taken"})
         if collection.find_one({"email": new_user.email}):
@@ -58,38 +73,26 @@ async def register_user(new_user: User):
 
         user_dict = new_user.model_dump()
         user_dict["created_at"] = datetime.utcnow()
-        user_dict["password"] = pwd_context.hash(new_user.password)
+        user_dict["password"] = str(pwd_context.hash(new_user.password))
         resp = collection.insert_one(user_dict)
 
         # 📧 Welcome Email
         message = MessageSchema(
-            subject="Welcome to My App 🎉",
+            subject="Welcome to Fake News Detector 🎉",
             recipients=[new_user.email],
             body=f"""
                 <h2>Hello {new_user.full_name},</h2>
-                <p>Thank you for signing up with Fake News Detector ! We’re excited to have you join our mission of making the internet a safer and more reliable place.</p>
+                <p>Thank you for signing up with <b>Fake News Detector</b>! 
+                We’re excited to have you join our mission of making the internet safer.</p>
+                <p>With our app you can:</p>
+                <ul>
+                    <li>✅ Instantly check if a news article is genuine</li>
+                    <li>✅ Stay updated with verified news sources</li>
+                    <li>✅ Report suspicious content</li>
+                </ul>
+                <p>Welcome once again, and thank you for trusting us.</p>
                 <br>
-                <p>With Fake News Detector , you can:</p><br>
-                ✅ Instantly check if a news article is genuine or misleading<br>
-✅ Stay updated with verified news sources<br>
-✅ Report suspicious content and help others avoid misinformation<br>
-✅ Be part of a growing community that values truth and transparency<br>
-
-<p>Whether you’re a student, researcher, or just someone who wants to know the facts, our app gives you the tools you need to separate fact from fiction.</p>
-
-What’s next?
-<br>
-Open the app and explore your dashboard
-<br>
-Try scanning your first news article
-<br>
-Share the app with friends and family so they can stay safe too
-<br>
-Together, we can make a real difference against the spread of fake news.
-Welcome once again, and thank you for trusting us.
-<br>
-Best regards,
-The Multiverse Team
+                <p>Best regards,<br>The Multiverse Team</p>
             """,
             subtype=MessageType.html
         )
@@ -103,9 +106,11 @@ The Multiverse Team
     except Exception as e:
         return JSONResponse(status_code=500, content={"message": f"Error: {str(e)}"})
 
+
 # ------------------ FORGOT PASSWORD ------------------
 @user_router.post("/forgot-password")
-async def forgot_password(email: str = Query(...)):
+async def forgot_password(request: ForgotPasswordRequest):
+    email = request.email.strip().lower()
     user = collection.find_one({"email": email})
     if not user:
         raise HTTPException(status_code=404, detail="Email not registered")
@@ -132,9 +137,11 @@ async def forgot_password(email: str = Query(...)):
 
     return {"status": "success", "message": "OTP sent to email"}
 
+
 # ------------------ RESET PASSWORD ------------------
 @user_router.post("/reset-password")
-async def reset_password(email: str, otp: str, new_password: str):
+async def reset_password(request: ResetPasswordRequest):
+    email = request.email.strip().lower()
     user = collection.find_one({"email": email})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -145,18 +152,13 @@ async def reset_password(email: str, otp: str, new_password: str):
     if datetime.utcnow() > user["reset_expiry"]:
         raise HTTPException(status_code=400, detail="OTP expired")
 
-    if otp != user["reset_otp"]:
+    if request.otp != user["reset_otp"]:
         raise HTTPException(status_code=400, detail="Invalid OTP")
 
-    # ✅ Always ensure string
-    hashed_password = str(pwd_context.hash(new_password))
-
+    hashed_password = str(pwd_context.hash(request.new_password))
     collection.update_one(
         {"email": email},
-        {
-            "$set": {"password": hashed_password},
-            "$unset": {"reset_otp": "", "reset_expiry": ""}
-        }
+        {"$set": {"password": hashed_password}, "$unset": {"reset_otp": "", "reset_expiry": ""}}
     )
 
     return {"status": "success", "message": "Password reset successfully"}
@@ -165,9 +167,11 @@ async def reset_password(email: str, otp: str, new_password: str):
 # ------------------ DELETE ------------------
 @user_router.delete("/delete/{email}")
 async def delete_user(email: str):
+    email = email.strip().lower()
     result = collection.delete_one({"email": email})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="User not found")
     return {"status": "success", "message": "Account deleted"}
+
 
 app.include_router(user_router)
