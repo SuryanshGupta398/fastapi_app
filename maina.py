@@ -1,17 +1,34 @@
-from fastapi import FastAPI, APIRouter, HTTPException
+from fastapi import FastAPI, APIRouter, HTTPException, Depends
 from fastapi.responses import JSONResponse
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr
 from configuration import collection
 from models import User, LoginUser
 from datetime import datetime, timedelta
 from passlib.context import CryptContext
 from fastapi_mail import FastMail, MessageSchema, ConnectionConfig, MessageType
+from jose import JWTError, jwt
 import os, random
 
 app = FastAPI()
 user_router = APIRouter(prefix="/users", tags=["Users"])
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# ------------------ JWT CONFIG ------------------
+SECRET_KEY = os.getenv("SECRET_KEY", "supersecretkey")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="users/signin")
+
+
+def create_access_token(data: dict, expires_delta: timedelta = None):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
 
 # ------------------ Email Config ------------------
 conf = ConnectionConfig(
@@ -27,9 +44,11 @@ conf = ConnectionConfig(
 
 fm = FastMail(conf)
 
+
 # ------------------ REQUEST MODELS ------------------
 class ForgotPasswordRequest(BaseModel):
     email: EmailStr
+
 
 class ResetPasswordRequest(BaseModel):
     email: EmailStr
@@ -39,19 +58,23 @@ class ResetPasswordRequest(BaseModel):
 
 # ------------------ SIGN IN ------------------
 @user_router.post("/signin")
-async def signin_user(login_user: LoginUser):
-    user_in_db = collection.find_one({"email": login_user.email.strip().lower()})
-    if not user_in_db:
+async def signin_user(form_data: OAuth2PasswordRequestForm = Depends()):
+    email = form_data.username.strip().lower()
+    password = form_data.password
+
+    user_in_db = collection.find_one({"email": email})
+    if not user_in_db or not pwd_context.verify(password, user_in_db["password"]):
         return JSONResponse(status_code=401, content={"message": "Invalid email or password"})
 
-    if not pwd_context.verify(login_user.password, user_in_db["password"]):
-        return JSONResponse(status_code=401, content={"message": "Invalid email or password"})
+    access_token = create_access_token(data={"sub": email})
 
     return JSONResponse(
         status_code=200,
         content={
-            "status_code": 200,
+            "status": "success",
             "message": "Login successful",
+            "access_token": access_token,
+            "token_type": "bearer",
             "full_name": user_in_db.get("full_name", ""),
             "username": user_in_db.get("username", ""),
             "email": user_in_db["email"]
@@ -63,7 +86,6 @@ async def signin_user(login_user: LoginUser):
 @user_router.post("/register")
 async def register_user(new_user: User):
     try:
-        # normalize email
         new_user.email = new_user.email.strip().lower()
 
         if collection.find_one({"username": new_user.username}):
@@ -100,8 +122,11 @@ async def register_user(new_user: User):
 
         return JSONResponse(
             status_code=200,
-            content={"status": "success", "id": str(resp.inserted_id),
-                     "message": "User registered successfully and email sent"}
+            content={
+                "status": "success",
+                "id": str(resp.inserted_id),
+                "message": "User registered successfully and email sent"
+            }
         )
     except Exception as e:
         return JSONResponse(status_code=500, content={"message": f"Error: {str(e)}"})
@@ -118,9 +143,11 @@ async def forgot_password(request: ForgotPasswordRequest):
     otp = str(random.randint(100000, 999999))
     expiry = datetime.utcnow() + timedelta(minutes=5)
 
+    # Overwrite old OTP (no duplicates)
     collection.update_one(
         {"email": email},
-        {"$set": {"reset_otp": otp, "reset_expiry": expiry}}
+        {"$set": {"reset_otp": otp, "reset_expiry": expiry}},
+        upsert=False
     )
 
     message = MessageSchema(
@@ -135,7 +162,7 @@ async def forgot_password(request: ForgotPasswordRequest):
     )
     await fm.send_message(message)
 
-    return {"status": "success", "message": "OTP sent to email"}
+    return JSONResponse(status_code=200, content={"status": "success", "message": "OTP sent to email"})
 
 
 # ------------------ RESET PASSWORD ------------------
@@ -167,7 +194,8 @@ async def reset_password(request: ResetPasswordRequest):
         {"$set": {"password": hashed_password}, "$unset": {"reset_otp": 1, "reset_expiry": 1}}
     )
 
-    return {"status": "success", "message": "Password reset successfully"}
+    return JSONResponse(status_code=200, content={"status": "success", "message": "Password reset successfully"})
+
 
 # ------------------ DELETE ------------------
 @user_router.delete("/delete/{email}")
@@ -176,7 +204,8 @@ async def delete_user(email: str):
     result = collection.delete_one({"email": email})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="User not found")
-    return {"status": "success", "message": "Account deleted"}
+
+    return JSONResponse(status_code=200, content={"status": "success", "message": "Account deleted"})
 
 
 app.include_router(user_router)
