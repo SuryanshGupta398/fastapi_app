@@ -6,3 +6,4 @@ python-dotenv
 passlib[bcrypt]
 fastapi-mail
 python-jose[cryptography]
+python-multipart
