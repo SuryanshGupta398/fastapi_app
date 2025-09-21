@@ -5,3 +5,4 @@ pydantic[email]
 python-dotenv
 passlib[bcrypt]
 fastapi-mail
+python-jose[cryptography]
