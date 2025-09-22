@@ -1,7 +1,7 @@
 from fastapi import FastAPI, APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, EmailStr
-from configuration import collection  # your MongoDB collection
+from configuration import collection  # MongoDB collection
 from models import User, LoginUser
 from datetime import datetime, timedelta
 from passlib.context import CryptContext
@@ -61,7 +61,10 @@ async def register_user(new_user: User):
     )
     await fm.send_message(message)
 
-    return JSONResponse(status_code=200, content={"status": "success", "message": "User registered successfully"})
+    return JSONResponse(
+        status_code=200,
+        content={"status": "success", "message": "User registered successfully"}
+    )
 
 # ------------------ SIGN IN ------------------
 @user_router.post("/signin")
@@ -76,14 +79,18 @@ async def signin_user(login_user: LoginUser):
     if not pwd_context.verify(password, user_in_db["password"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
+    user_data = {
+        "full_name": user_in_db.get("full_name", ""),
+        "username": user_in_db.get("username", ""),
+        "email": user_in_db["email"]
+    }
+
     return JSONResponse(
         status_code=200,
         content={
-            "status_code": 200,
+            "status": "success",
             "message": "Login successful",
-            "full_name": user_in_db.get("full_name", ""),
-            "username": user_in_db.get("username", ""),
-            "email": user_in_db["email"]
+            "user": user_data
         }
     )
 
@@ -99,6 +106,7 @@ async def forgot_password(request: ForgotPasswordRequest):
     otp_in_db = user.get("reset_otp")
     expiry_in_db = user.get("reset_expiry")
 
+    # Reuse existing OTP if still valid
     if otp_in_db and expiry_in_db and expiry_in_db > now:
         otp_to_send = otp_in_db
     else:
@@ -117,7 +125,10 @@ async def forgot_password(request: ForgotPasswordRequest):
     )
     await fm.send_message(message)
 
-    return JSONResponse(status_code=200, content={"status": "success", "message": "OTP sent to email"})
+    return JSONResponse(
+        status_code=200,
+        content={"status": "success", "message": "OTP sent to email"}
+    )
 
 # ------------------ RESET PASSWORD ------------------
 @user_router.post("/reset-password")
@@ -146,13 +157,17 @@ async def reset_password(request: ResetPasswordRequest):
     if otp != otp_in_db:
         raise HTTPException(status_code=400, detail="Invalid OTP")
 
+    # Update password & remove OTP
     hashed_password = pwd_context.hash(new_password)
     collection.update_one(
         {"email": email},
         {"$set": {"password": hashed_password}, "$unset": {"reset_otp": 1, "reset_expiry": 1}}
     )
 
-    return JSONResponse(status_code=200, content={"status": "success", "message": "Password reset successfully"})
+    return JSONResponse(
+        status_code=200,
+        content={"status": "success", "message": "Password reset successfully"}
+    )
 
 # ------------------ DELETE ------------------
 @user_router.delete("/delete/{email}")
@@ -162,7 +177,10 @@ async def delete_user(email: str):
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="User not found")
 
-    return JSONResponse(status_code=200, content={"status": "success", "message": "Account deleted"})
+    return JSONResponse(
+        status_code=200,
+        content={"status": "success", "message": "Account deleted"}
+    )
 
 # ------------------ Include Router ------------------
 app.include_router(user_router)
