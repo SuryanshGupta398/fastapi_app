@@ -75,20 +75,13 @@ async def register_user(new_user: User):
         user_dict["password"] = str(pwd_context.hash(new_user.password))
         resp = collection.insert_one(user_dict)
 
-        # 📧 Welcome Email
+        # Welcome Email
         message = MessageSchema(
             subject="Welcome to Fake News Detector 🎉",
             recipients=[new_user.email],
             body=f"""
                 <h2>Hello {new_user.full_name},</h2>
                 <p>Thank you for signing up with <b>Fake News Detector</b>!</p>
-                <p>With our app you can:</p>
-                <ul>
-                    <li>✅ Instantly check if a news article is genuine</li>
-                    <li>✅ Stay updated with verified news sources</li>
-                    <li>✅ Report suspicious content</li>
-                </ul>
-                <p>Welcome once again, and thank you for trusting us.</p>
             """,
             subtype=MessageType.html
         )
@@ -96,11 +89,7 @@ async def register_user(new_user: User):
 
         return JSONResponse(
             status_code=200,
-            content={
-                "status": "success",
-                "id": str(resp.inserted_id),
-                "message": "User registered successfully and email sent"
-            }
+            content={"status": "success", "id": str(resp.inserted_id), "message": "User registered successfully and email sent"}
         )
     except Exception as e:
         return JSONResponse(status_code=500, content={"message": f"Error: {str(e)}"})
@@ -113,21 +102,27 @@ async def forgot_password(request: ForgotPasswordRequest):
     if not user:
         raise HTTPException(status_code=404, detail="Email not registered")
 
+    # Check existing OTP
     existing_otp = user.get("reset_otp")
     expiry = user.get("reset_expiry")
+    now = datetime.utcnow()
 
-    # Use existing OTP if still valid
-    if existing_otp and expiry and expiry > datetime.utcnow():
-        otp_to_send = existing_otp
+    if existing_otp and expiry and expiry > now:
+        otp_to_send = existing_otp  # reuse
     else:
         otp_to_send = str(random.randint(100000, 999999))
-        expiry = datetime.utcnow() + timedelta(minutes=5)
-        collection.update_one(
+        expiry = now + timedelta(minutes=5)
+
+        # Store OTP safely
+        updated_user = collection.find_one_and_update(
             {"email": email},
             {"$set": {"reset_otp": otp_to_send, "reset_expiry": expiry}},
-            upsert=True
+            return_document=True
         )
+        if not updated_user:
+            raise HTTPException(status_code=404, detail="User not found to store OTP")
 
+    # Send OTP email
     message = MessageSchema(
         subject="Password Reset OTP",
         recipients=[email],
@@ -169,7 +164,7 @@ async def reset_password(request: ResetPasswordRequest):
     if otp != otp_in_db:
         raise HTTPException(status_code=400, detail="Invalid OTP")
 
-    # Update password and remove OTP
+    # Update password and clear OTP
     hashed_password = pwd_context.hash(new_password)
     collection.update_one(
         {"email": email},
@@ -185,7 +180,6 @@ async def delete_user(email: str):
     result = collection.delete_one({"email": email})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="User not found")
-
     return JSONResponse(status_code=200, content={"status": "success", "message": "Account deleted"})
 
 # ------------------ INCLUDE ROUTER ------------------
