@@ -120,11 +120,11 @@ async def forgot_password(request: ForgotPasswordRequest):
     otp = str(random.randint(100000, 999999))
     expiry = datetime.utcnow() + timedelta(minutes=5)
 
-    # Overwrite old OTP if exists
+    # Corrected: ensure OTP is stored
     collection.update_one(
         {"email": email},
         {"$set": {"reset_otp": otp, "reset_expiry": expiry}},
-        upsert=False
+        upsert=True
     )
 
     message = MessageSchema(
