@@ -51,12 +51,12 @@ async def register_user(new_user: User):
     collection.insert_one(user_dict)
 
     # Send welcome email
-    message = MessageSchema(
-        subject="Welcome to Fake News Detector 🎉",
-        recipients=[email],
-        body=f"<h2>Hello {new_user.full_name},</h2><p>Thanks for registering!</p>",
-        subtype=MessageType.html
-    )
+    message = MessageSchema( subject="Welcome to Fake News Detector 🎉", 
+    recipients=[new_user.email], 
+    
+    body=f""" <h2>Hello {new_user.full_name},</h2> 
+    <p>Thank you for signing up with <b>Fake News Detector</b>! We’re excited to have you join our mission of making the internet safer.</p> <p>With our app you can:</p> <ul> <li>✅ Instantly check if a news article is genuine</li> <li>✅ Stay updated with verified news sources</li> <li>✅ Report suspicious content</li> </ul> <p>Welcome once again, and thank you for trusting us.</p> <br> <p>Best regards,<br>The Multiverse Team</p> """, 
+                            subtype=MessageType.html ) 
     await fm.send_message(message)
 
     return JSONResponse(status_code=200, content={"status": "success", "message": "User registered successfully"})
