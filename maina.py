@@ -16,7 +16,7 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 # ------------------ Email Config ------------------
 conf = ConnectionConfig(
     MAIL_USERNAME=os.getenv("MAIL_USERNAME"),
-    MAIL_PASSWORD=os.getenv("MAIL_PASSWORD"),  # Gmail App Password
+    MAIL_PASSWORD=os.getenv("MAIL_PASSWORD"),
     MAIL_FROM=os.getenv("MAIL_FROM"),
     MAIL_PORT=587,
     MAIL_SERVER="smtp.gmail.com",
@@ -52,7 +52,6 @@ async def signin_user(login_user: LoginUser):
     return JSONResponse(
         status_code=200,
         content={
-            "status_code": 200,
             "message": "Login successful",
             "full_name": user_in_db.get("full_name", ""),
             "username": user_in_db.get("username", ""),
@@ -82,8 +81,7 @@ async def register_user(new_user: User):
             recipients=[new_user.email],
             body=f"""
                 <h2>Hello {new_user.full_name},</h2>
-                <p>Thank you for signing up with <b>Fake News Detector</b>! 
-                We’re excited to have you join our mission of making the internet safer.</p>
+                <p>Thank you for signing up with <b>Fake News Detector</b>!</p>
                 <p>With our app you can:</p>
                 <ul>
                     <li>✅ Instantly check if a news article is genuine</li>
@@ -91,8 +89,6 @@ async def register_user(new_user: User):
                     <li>✅ Report suspicious content</li>
                 </ul>
                 <p>Welcome once again, and thank you for trusting us.</p>
-                <br>
-                <p>Best regards,<br>The Multiverse Team</p>
             """,
             subtype=MessageType.html
         )
@@ -117,22 +113,27 @@ async def forgot_password(request: ForgotPasswordRequest):
     if not user:
         raise HTTPException(status_code=404, detail="Email not registered")
 
-    otp = str(random.randint(100000, 999999))
-    expiry = datetime.utcnow() + timedelta(minutes=5)
+    existing_otp = user.get("reset_otp")
+    expiry = user.get("reset_expiry")
 
-    # Corrected: ensure OTP is stored
-    collection.update_one(
-        {"email": email},
-        {"$set": {"reset_otp": otp, "reset_expiry": expiry}},
-        upsert=True
-    )
+    # Use existing OTP if still valid
+    if existing_otp and expiry and expiry > datetime.utcnow():
+        otp_to_send = existing_otp
+    else:
+        otp_to_send = str(random.randint(100000, 999999))
+        expiry = datetime.utcnow() + timedelta(minutes=5)
+        collection.update_one(
+            {"email": email},
+            {"$set": {"reset_otp": otp_to_send, "reset_expiry": expiry}},
+            upsert=True
+        )
 
     message = MessageSchema(
         subject="Password Reset OTP",
         recipients=[email],
         body=f"""
             <h2>Password Reset Request</h2>
-            <p>Your OTP is: <b>{otp}</b></p>
+            <p>Your OTP is: <b>{otp_to_send}</b></p>
             <p>This OTP is valid for 5 minutes.</p>
         """,
         subtype=MessageType.html
@@ -156,14 +157,19 @@ async def reset_password(request: ResetPasswordRequest):
     expiry_in_db = user.get("reset_expiry")
 
     if not otp_in_db or not expiry_in_db:
-        raise HTTPException(status_code=400, detail="OTP not generated or already used")
+        raise HTTPException(status_code=400, detail="OTP not generated. Request a new one.")
+
+    # Convert expiry to datetime if stored as string
+    if isinstance(expiry_in_db, str):
+        expiry_in_db = datetime.fromisoformat(expiry_in_db)
 
     if datetime.utcnow() > expiry_in_db:
-        raise HTTPException(status_code=400, detail="OTP expired")
+        raise HTTPException(status_code=400, detail="OTP expired. Request a new one.")
 
     if otp != otp_in_db:
         raise HTTPException(status_code=400, detail="Invalid OTP")
 
+    # Update password and remove OTP
     hashed_password = pwd_context.hash(new_password)
     collection.update_one(
         {"email": email},
@@ -172,7 +178,7 @@ async def reset_password(request: ResetPasswordRequest):
 
     return JSONResponse(status_code=200, content={"status": "success", "message": "Password reset successfully"})
 
-# ------------------ DELETE ------------------
+# ------------------ DELETE ACCOUNT ------------------
 @user_router.delete("/delete/{email}")
 async def delete_user(email: str):
     email = email.strip().lower()
@@ -182,4 +188,5 @@ async def delete_user(email: str):
 
     return JSONResponse(status_code=200, content={"status": "success", "message": "Account deleted"})
 
+# ------------------ INCLUDE ROUTER ------------------
 app.include_router(user_router)
