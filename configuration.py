@@ -8,4 +8,5 @@ MONGO_URI = os.getenv("MONGO_URI")
 client = MongoClient(MONGO_URI, server_api=ServerApi('1'))
 db = client["fake_new_app"]
 collection=db["users"]
+news_collection = db["news"]
 # Send a ping to confirm a successful connection
