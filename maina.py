@@ -159,23 +159,25 @@ async def delete_user(email: str):
     return JSONResponse(status_code=200, content={"status": "success", "message": "Account deleted"})
 
 # ------------------ News Functions ------------------
-def fetch_and_store_news(lang="en", max_results=10):
+def fetch_and_store_news(lang="en", max_results=20):
     url = f"https://gnews.io/api/v4/top-headlines?country=in&lang={lang}&max={max_results}&apikey={GNEWS_API_KEY}"
     response = requests.get(url)
     if response.status_code == 200:
         articles = response.json().get("articles", [])
         for a in articles:
-            if news_collection.count_documents({"url": a["url"]}) == 0:
-                news_collection.insert_one({
+            news_collection.update_one(
+                {"url": a["url"]},  # Check by URL
+                {"$set": {
                     "title": a["title"],
                     "description": a["description"],
-                    "url": a["url"],
                     "image": a.get("image", ""),
                     "publishedAt": a["publishedAt"],
                     "language": lang,
                     "source": "GNews",
-                    "createdAt": datetime.utcnow()
-                })
+                    "createdAt": datetime.utcnow()  # always update timestamp to appear on top
+                }},
+                upsert=True  # Insert if it doesn't exist
+            )
 
 def cleanup_old_news():
     one_week_ago = datetime.utcnow() - timedelta(days=7)
