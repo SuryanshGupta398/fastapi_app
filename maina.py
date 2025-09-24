@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from passlib.context import CryptContext
 from fastapi_mail import FastMail, MessageSchema, ConnectionConfig, MessageType
 import os, random
+from apscheduler.schedulers.background import BackgroundScheduler
 
 app = FastAPI()
 user_router = APIRouter(prefix="/users", tags=["Users"])
