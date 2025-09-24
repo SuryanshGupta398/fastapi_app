@@ -1,7 +1,7 @@
 from fastapi import FastAPI, APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, EmailStr
-from configuration import collection  # your MongoDB collection
+from configuration import collection, news_collection  # your MongoDB collection
 from models import User, LoginUser
 from datetime import datetime, timedelta
 from passlib.context import CryptContext
@@ -13,6 +13,7 @@ user_router = APIRouter(prefix="/users", tags=["Users"])
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+GNEWS_API_KEY = os.getenv("GNEWS_KEY")
 # ------------------ Email Configuration ------------------
 conf = ConnectionConfig(
     MAIL_USERNAME=os.getenv("MAIL_USERNAME"),
@@ -152,3 +153,48 @@ async def delete_user(email: str):
 
 # ------------------ Include Router ------------------
 app.include_router(user_router)
+news_router = APIRouter(prefix="/news", tags=["News"])
+
+def fetch_and_store_news(lang="en", max_results=10):
+    url = f"https://gnews.io/api/v4/top-headlines?country=in&lang={lang}&max={max_results}&apikey={GNEWS_API_KEY}"
+    response = requests.get(url)
+    if response.status_code == 200:
+        articles = response.json().get("articles", [])
+        for a in articles:
+            if news_collection.count_documents({"url": a["url"]}) == 0:
+                news_collection.insert_one({
+                    "title": a["title"],
+                    "description": a["description"],
+                    "url": a["url"],
+                    "image": a.get("image", ""),
+                    "publishedAt": a["publishedAt"],
+                    "language": lang,
+                    "source": "GNews",
+                    "createdAt": datetime.utcnow()
+                })
+
+@news_router.get("/")
+def get_news(language: str = "en"):
+    news = list(news_collection.find({"language": language}).sort("createdAt", -1))
+    for n in news:
+        n["_id"] = str(n["_id"])
+    return {"articles": news}
+
+@news_router.post("/refresh")
+def refresh_news():
+    fetch_and_store_news("en")
+    fetch_and_store_news("hi")
+    return {"status": "success", "message": "News refreshed"}
+
+@news_router.delete("/cleanup")
+def cleanup_old_news():
+    one_week_ago = datetime.utcnow() - timedelta(days=7)
+    result = news_collection.delete_many({"createdAt": {"$lt": one_week_ago}})
+    return {"deleted_count": result.deleted_count}
+
+# Automatic cleanup every 24 hours
+scheduler = BackgroundScheduler()
+scheduler.add_job(cleanup_old_news, 'interval', hours=24)
+scheduler.start()
+
+app.include_router(news_router)
