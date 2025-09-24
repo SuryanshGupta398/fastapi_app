@@ -78,6 +78,7 @@ async def register_user(new_user: User):
         subtype=MessageType.html
     )
     await fm.send_message(message)
+
     return JSONResponse(status_code=200, content={"status": "success", "message": "User registered successfully"})
 
 @user_router.post("/signin")
@@ -160,30 +161,34 @@ async def delete_user(email: str):
 # ------------------ News Functions ------------------
 def fetch_and_store_news(lang="en", max_results=20):
     url = f"https://gnews.io/api/v4/top-headlines?country=in&lang={lang}&max={max_results}&apikey={GNEWS_API_KEY}"
-    response = requests.get(url)
-    if response.status_code == 200:
-        articles = response.json().get("articles", [])
-        inserted = 0
-        for a in articles:
-            # Avoid duplicates by title + publishedAt
-            if news_collection.count_documents({"title": a["title"], "publishedAt": a["publishedAt"]}) == 0:
-                news_collection.insert_one({
-                    "title": a["title"],
-                    "description": a["description"],
-                    "url": a["url"],
-                    "image": a.get("image", ""),
-                    "publishedAt": a["publishedAt"],
-                    "language": lang,
-                    "source": "GNews",
-                    "createdAt": datetime.utcnow()
-                })
-                inserted += 1
-        print(f"[{datetime.utcnow()}] Inserted {inserted} new articles for {lang}")
+    try:
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            articles = response.json().get("articles", [])
+            inserted_count = 0
+            for a in articles:
+                if news_collection.count_documents({"url": a["url"]}) == 0:
+                    news_collection.insert_one({
+                        "title": a.get("title", ""),
+                        "description": a.get("description", ""),
+                        "url": a["url"],
+                        "image": a.get("image", ""),
+                        "publishedAt": a.get("publishedAt", ""),
+                        "language": lang,
+                        "source": "GNews",
+                        "createdAt": datetime.utcnow()
+                    })
+                    inserted_count += 1
+            print(f"[{lang}] Inserted {inserted_count} new articles")
+        else:
+            print(f"[{lang}] Failed to fetch news: {response.status_code}")
+    except Exception as e:
+        print(f"[{lang}] Error fetching news: {e}")
 
 def cleanup_old_news():
     one_week_ago = datetime.utcnow() - timedelta(days=7)
     result = news_collection.delete_many({"createdAt": {"$lt": one_week_ago}})
-    print(f"[{datetime.utcnow()}] Deleted {result.deleted_count} old news articles")
+    print(f"Deleted {result.deleted_count} old news articles")
     return result.deleted_count
 
 # ------------------ News Routes ------------------
@@ -203,14 +208,18 @@ def refresh_news():
 # ------------------ Scheduler ------------------
 scheduler = BackgroundScheduler()
 
-# Automatic news refresh every 30 minutes (English + Hindi)
-scheduler.add_job(lambda: fetch_and_store_news("en", max_results=20), 'interval', minutes=30)
-scheduler.add_job(lambda: fetch_and_store_news("hi", max_results=20), 'interval', minutes=30)
+# News refresh every 30 minutes for English & Hindi
+def scheduled_fetch_news(lang):
+    fetch_and_store_news(lang)
 
-# Automatic cleanup every 24 hours
-scheduler.add_job(cleanup_old_news, 'interval', hours=24)
+scheduler.add_job(scheduled_fetch_news, args=["en"], trigger='interval', minutes=30, id="refresh_en_news")
+scheduler.add_job(scheduled_fetch_news, args=["hi"], trigger='interval', minutes=30, id="refresh_hi_news")
+
+# Cleanup old news every 24 hours
+scheduler.add_job(cleanup_old_news, trigger='interval', hours=24, id="cleanup_old_news")
 
 scheduler.start()
+print("Scheduler started: fetching news every 30 minutes and cleaning up every 24 hours.")
 
 # ------------------ Include Routers ------------------
 app.include_router(user_router)
