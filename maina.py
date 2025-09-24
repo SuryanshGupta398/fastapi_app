@@ -6,7 +6,7 @@ from models import User, LoginUser
 from datetime import datetime, timedelta
 from passlib.context import CryptContext
 from fastapi_mail import FastMail, MessageSchema, ConnectionConfig, MessageType
-import os, random
+import os, random, requests
 from apscheduler.schedulers.background import BackgroundScheduler
 
 app = FastAPI()
