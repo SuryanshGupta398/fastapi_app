@@ -13,7 +13,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from configuration import collection, news_collection  # MongoDB collections
 from models import User, LoginUser
 
-# ------------------ App & Router ------------------
+# ------------------ App & Routers ------------------
 app = FastAPI()
 user_router = APIRouter(prefix="/users", tags=["Users"])
 news_router = APIRouter(prefix="/news", tags=["News"])
@@ -78,7 +78,6 @@ async def register_user(new_user: User):
         subtype=MessageType.html
     )
     await fm.send_message(message)
-
     return JSONResponse(status_code=200, content={"status": "success", "message": "User registered successfully"})
 
 @user_router.post("/signin")
@@ -164,25 +163,27 @@ def fetch_and_store_news(lang="en", max_results=20):
     response = requests.get(url)
     if response.status_code == 200:
         articles = response.json().get("articles", [])
+        inserted = 0
         for a in articles:
-            news_collection.update_one(
-                {"url": a["url"]},  # Check by URL
-                {"$set": {
+            # Avoid duplicates by title + publishedAt
+            if news_collection.count_documents({"title": a["title"], "publishedAt": a["publishedAt"]}) == 0:
+                news_collection.insert_one({
                     "title": a["title"],
                     "description": a["description"],
+                    "url": a["url"],
                     "image": a.get("image", ""),
                     "publishedAt": a["publishedAt"],
                     "language": lang,
                     "source": "GNews",
-                    "createdAt": datetime.utcnow()  # always update timestamp to appear on top
-                }},
-                upsert=True  # Insert if it doesn't exist
-            )
+                    "createdAt": datetime.utcnow()
+                })
+                inserted += 1
+        print(f"[{datetime.utcnow()}] Inserted {inserted} new articles for {lang}")
 
 def cleanup_old_news():
     one_week_ago = datetime.utcnow() - timedelta(days=7)
     result = news_collection.delete_many({"createdAt": {"$lt": one_week_ago}})
-    print(f"Deleted {result.deleted_count} old news articles")
+    print(f"[{datetime.utcnow()}] Deleted {result.deleted_count} old news articles")
     return result.deleted_count
 
 # ------------------ News Routes ------------------
@@ -203,8 +204,8 @@ def refresh_news():
 scheduler = BackgroundScheduler()
 
 # Automatic news refresh every 30 minutes (English + Hindi)
-scheduler.add_job(lambda: fetch_and_store_news("en"), 'interval', minutes=30)
-scheduler.add_job(lambda: fetch_and_store_news("hi"), 'interval', minutes=30)
+scheduler.add_job(lambda: fetch_and_store_news("en", max_results=20), 'interval', minutes=30)
+scheduler.add_job(lambda: fetch_and_store_news("hi", max_results=20), 'interval', minutes=30)
 
 # Automatic cleanup every 24 hours
 scheduler.add_job(cleanup_old_news, 'interval', hours=24)
