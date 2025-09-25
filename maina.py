@@ -3,7 +3,7 @@ import random
 import requests
 from datetime import datetime, timedelta
 
-from fastapi import FastAPI, APIRouter, HTTPException
+from fastapi import FastAPI, APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, EmailStr
 from passlib.context import CryptContext
@@ -37,6 +37,9 @@ conf = ConnectionConfig(
 )
 fm = FastMail(conf)
 
+# ------------------ Cron Secret ------------------
+CRON_SECRET = os.getenv("CRON_SECRET")  # change in Render env
+
 # ------------------ Request Models ------------------
 class ForgotPasswordRequest(BaseModel):
     email: EmailStr
@@ -67,7 +70,6 @@ async def register_user(new_user: User):
         recipients=[new_user.email],
         body=f"""<h2>Hello {new_user.full_name},</h2>
         <p>Thank you for signing up with <b>Fake News Detector</b>! We’re excited to have you join our mission of making the internet safer.</p>
-        <p>With our app you can:</p>
         <ul>
             <li>✅ Instantly check if a news article is genuine</li>
             <li>✅ Stay updated with verified news sources</li>
@@ -78,7 +80,6 @@ async def register_user(new_user: User):
         subtype=MessageType.html
     )
     await fm.send_message(message)
-
     return JSONResponse(status_code=200, content={"status": "success", "message": "User registered successfully"})
 
 @user_router.post("/signin")
@@ -200,7 +201,9 @@ def get_news(language: str = "en", limit: int = 20):
     return {"articles": news}
 
 @news_router.post("/refresh")
-def refresh_news():
+def refresh_news(secret: str = Query(..., description="Cron secret for security")):
+    if secret != CRON_SECRET:
+        raise HTTPException(status_code=401, detail="Unauthorized")
     fetch_and_store_news("en")
     fetch_and_store_news("hi")
     return {"status": "success", "message": "News refreshed"}
@@ -208,15 +211,12 @@ def refresh_news():
 # ------------------ Scheduler ------------------
 scheduler = BackgroundScheduler()
 
-# News refresh every 30 minutes for English & Hindi
-def scheduled_fetch_news(lang):
-    fetch_and_store_news(lang)
+# Automatic refresh every 30 minutes
+scheduler.add_job(lambda: fetch_and_store_news("en"), 'interval', minutes=30, id="refresh_en_news")
+scheduler.add_job(lambda: fetch_and_store_news("hi"), 'interval', minutes=30, id="refresh_hi_news")
 
-scheduler.add_job(scheduled_fetch_news, args=["en"], trigger='interval', minutes=30, id="refresh_en_news")
-scheduler.add_job(scheduled_fetch_news, args=["hi"], trigger='interval', minutes=30, id="refresh_hi_news")
-
-# Cleanup old news every 24 hours
-scheduler.add_job(cleanup_old_news, trigger='interval', hours=24, id="cleanup_old_news")
+# Automatic cleanup every 24 hours
+scheduler.add_job(cleanup_old_news, 'interval', hours=24, id="cleanup_old_news")
 
 scheduler.start()
 print("Scheduler started: fetching news every 30 minutes and cleaning up every 24 hours.")
