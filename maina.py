@@ -51,8 +51,8 @@ class ResetPasswordRequest(BaseModel):
 
 # ------------------ Health Endpoint ------------------
 @app.get("/health")
-async def health():
-    return {"status": "ok"}
+def health_check():
+    return {"status": "ok", "time": datetime.utcnow().isoformat()}
 
 # ------------------ User Routes ------------------
 @user_router.post("/register")
@@ -208,14 +208,14 @@ def get_news(language: str = "en", limit: int = 20):
         n["_id"] = str(n["_id"])
     return {"articles": news}
 
-@news_router.post("/refresh")
+# ✅ Allow both GET and POST for refresh
+@news_router.api_route("/refresh", methods=["GET", "POST"])
 def refresh_news(secret: str = Query(..., description="Cron secret for security")):
     if secret != CRON_SECRET:
         raise HTTPException(status_code=401, detail="Unauthorized")
     fetch_and_store_news("en")
     fetch_and_store_news("hi")
     return {"status": "success", "message": "News refreshed"}
-
 # ------------------ Scheduler ------------------
 scheduler = BackgroundScheduler()
 
