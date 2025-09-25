@@ -49,6 +49,11 @@ class ResetPasswordRequest(BaseModel):
     otp: str
     new_password: str
 
+# ------------------ Health Endpoint ------------------
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
 # ------------------ User Routes ------------------
 @user_router.post("/register")
 async def register_user(new_user: User):
@@ -105,6 +110,8 @@ async def forgot_password(request: ForgotPasswordRequest):
     now = datetime.utcnow()
     otp_in_db = user.get("reset_otp")
     expiry_in_db = user.get("reset_expiry")
+    if isinstance(expiry_in_db, str):
+        expiry_in_db = datetime.fromisoformat(expiry_in_db) if expiry_in_db else None
 
     if otp_in_db and expiry_in_db and expiry_in_db > now:
         otp_to_send = otp_in_db
@@ -134,11 +141,12 @@ async def reset_password(request: ResetPasswordRequest):
 
     otp_in_db = user.get("reset_otp")
     expiry_in_db = user.get("reset_expiry")
-    if not otp_in_db or not expiry_in_db:
-        raise HTTPException(status_code=400, detail="OTP not generated. Request a new one.")
     if isinstance(expiry_in_db, str):
         expiry_in_db = datetime.fromisoformat(expiry_in_db)
     now = datetime.utcnow()
+
+    if not otp_in_db or not expiry_in_db:
+        raise HTTPException(status_code=400, detail="OTP not generated. Request a new one.")
     if now > expiry_in_db:
         raise HTTPException(status_code=400, detail="OTP expired. Request a new one.")
     if request.otp != otp_in_db:
