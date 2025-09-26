@@ -175,29 +175,33 @@ def fetch_and_store_news(lang="en"):
         if response.status_code == 200:
             data = response.json()
             articles = data.get("results", [])
-            inserted_count = 0
+            print(f"[{lang}] API returned {len(articles)} articles")
 
+            inserted_count = 0
             for a in articles:
-                if news_collection.count_documents({"url": a.get("link")}) == 0:
-                    news_collection.insert_one({
+                link = a.get("link")
+                if not link:
+                    print(f"[{lang}] Skipping article without link: {a}")
+                    continue  # link is mandatory for uniqueness
+
+                if news_collection.count_documents({"url": link}) == 0:
+                    doc = {
                         "title": a.get("title", ""),
                         "description": a.get("description", ""),
-                        "url": a.get("link"),
+                        "url": link,
                         "image": a.get("image_url", ""),
                         "publishedAt": a.get("pubDate", ""),
                         "language": lang,
                         "source": "NewsData.io",
                         "createdAt": datetime.utcnow()
-                    })
-                    inserted_count += 1
+                    }
+                    try:
+                        news_collection.insert_one(doc)
+                        inserted_count += 1
+                    except Exception as db_err:
+                        print(f"[{lang}] DB insert failed: {db_err}")
 
             print(f"[{lang}] Inserted {inserted_count} new articles")
-
-            
-            next_page = data.get("nextPage")
-            if next_page:
-                print(f"[{lang}] More news available, nextPage={next_page}")
-
         else:
             print(f"[{lang}] Failed to fetch news: {response.status_code} {response.text}")
     except Exception as e:
