@@ -168,13 +168,15 @@ async def delete_user(email: str):
     return JSONResponse(status_code=200, content={"status": "success", "message": "Account deleted"})
 
 # ------------------ News Functions ------------------
-def fetch_and_store_news(lang="en", max_results=20):
-    url = f"https://newsdata.io/api/1/news?apikey={NEWSDATA_API_KEY}&country=in&language={lang}&page=1"
+def fetch_and_store_news(lang="en"):
+    url = f"https://newsdata.io/api/1/news?apikey={NEWSDATA_API_KEY}&country=in&language={lang}"
     try:
         response = requests.get(url, timeout=10)
         if response.status_code == 200:
-            articles = response.json().get("results", [])
+            data = response.json()
+            articles = data.get("results", [])
             inserted_count = 0
+
             for a in articles:
                 if news_collection.count_documents({"url": a.get("link")}) == 0:
                     news_collection.insert_one({
@@ -188,7 +190,14 @@ def fetch_and_store_news(lang="en", max_results=20):
                         "createdAt": datetime.utcnow()
                     })
                     inserted_count += 1
+
             print(f"[{lang}] Inserted {inserted_count} new articles")
+
+            
+            next_page = data.get("nextPage")
+            if next_page:
+                print(f"[{lang}] More news available, nextPage={next_page}")
+
         else:
             print(f"[{lang}] Failed to fetch news: {response.status_code} {response.text}")
     except Exception as e:
