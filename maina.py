@@ -50,10 +50,12 @@ class ResetPasswordRequest(BaseModel):
     new_password: str
 
 # ------------------ Health Check ------------------
-@app.get("/health")
-def health_check():
+@app.api_route("/health", methods=["GET", "HEAD"])
+def health_check(request: Request):
+    # For HEAD requests, return minimal response
+    if request.method == "HEAD":
+        return {"status": "ok"}  # FastAPI will return empty body with 200
     return {"status": "ok", "time": datetime.utcnow().isoformat()}
-
 # ------------------ Email Sending Functions ------------------
 async def send_welcome_email(email: str, full_name: str):
     message = MessageSchema(
