@@ -253,7 +253,7 @@ def get_all_news():
         n["_id"] = str(n["_id"])
     return {"count": len(news), "articles": news}
 
-@news_router.api_route("/refresh", methods=["GET", "POST"])
+@news_router.api_route("/refresh", methods=["GET", "POST","HEAD"])
 def refresh_news(secret: str = Query(...)):
     if secret != CRON_SECRET:
         raise HTTPException(status_code=401, detail="Unauthorized")
