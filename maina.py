@@ -58,8 +58,8 @@ def health_check():
 async def send_welcome_email(email: str, full_name: str):
     message = MessageSchema(
         subject="Welcome to Fake News Detector 🎉",
-        recipients=[new_user.email],
-        body=f"""<h2>Hello {new_user.full_name},</h2>
+        recipients=[email],  # use email param
+        body=f"""<h2>Hello {full_name},</h2>  <!-- use full_name param -->
         <p>Thank you for signing up with <b>Fake News Detector</b>! We’re excited to have you join our mission of making the internet safer.</p>
         <ul>
             <li>✅ Instantly check if a news article is genuine</li>
