@@ -58,20 +58,6 @@ def health_check():
 async def send_welcome_email(email: str, full_name: str):
     message = MessageSchema(
         subject="Welcome to Fake News Detector 🎉",
-        recipients=[email],
-        body=f"""<h2>Hello {full_name},</h2>
-        <p>Thank you for signing up with <b>Fake News Detector</b>! We’re excited to have you join our mission.</p>""",
-        subtype=MessageType.html
-    )
-    try:
-        await fm.send_message(message)
-        print(f"✅ Welcome email sent to {email}")
-    except Exception as e:
-        print(f"❌ Failed to send welcome email to {email}: {e}")
-
-async def send_otp_email(email: str, otp: str):
-     message = MessageSchema(
-        subject="Welcome to Fake News Detector 🎉",
         recipients=[new_user.email],
         body=f"""<h2>Hello {new_user.full_name},</h2>
         <p>Thank you for signing up with <b>Fake News Detector</b>! We’re excited to have you join our mission of making the internet safer.</p>
@@ -82,6 +68,19 @@ async def send_otp_email(email: str, otp: str):
         </ul>
         <p>Welcome once again, and thank you for trusting us.</p>
         <br><p>Best regards,<br>The Multiverse Team</p>""",
+        subtype=MessageType.html
+    )
+    try:
+        await fm.send_message(message)
+        print(f"✅ Welcome email sent to {email}")
+    except Exception as e:
+        print(f"❌ Failed to send welcome email to {email}: {e}")
+
+async def send_otp_email(email: str, otp: str):
+    message = MessageSchema(
+        subject="Password Reset OTP",
+        recipients=[email],
+        body=f"<h2>Password Reset Request</h2><p>Your OTP is: <b>{otp}</b></p><p>Valid for 5 minutes.</p>",
         subtype=MessageType.html
     )
     try:
