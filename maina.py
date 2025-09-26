@@ -208,6 +208,13 @@ def get_news(language: str = "en", limit: int = 20):
         n["_id"] = str(n["_id"])
     return {"articles": news}
 
+@news_router.get("/all")
+def get_all_news():
+    news = list(news_collection.find().sort("createdAt", -1))  # get all news, latest first
+    for n in news:
+        n["_id"] = str(n["_id"])  # convert ObjectId to string
+    return {"count": len(news), "articles": news}
+
 # ✅ Allow both GET and POST for refresh
 @news_router.api_route("/refresh", methods=["GET", "POST"])
 def refresh_news(secret: str = Query(..., description="Cron secret for security")):
