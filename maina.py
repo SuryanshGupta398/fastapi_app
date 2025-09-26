@@ -22,7 +22,7 @@ news_router = APIRouter(prefix="/news", tags=["News"])
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # ------------------ GNews API Key ------------------
-GNEWS_API_KEY = os.getenv("GNEWS_KEY")
+NEWSDATA_API_KEY = os.getenv("GNEWS_KEY")
 
 # ------------------ Email Configuration ------------------
 conf = ConnectionConfig(
@@ -169,28 +169,28 @@ async def delete_user(email: str):
 
 # ------------------ News Functions ------------------
 def fetch_and_store_news(lang="en", max_results=20):
-    url = f"https://gnews.io/api/v4/top-headlines?country=in&lang={lang}&max={max_results}&apikey={GNEWS_API_KEY}"
+    url = f"https://newsdata.io/api/1/news?apikey={NEWSDATA_API_KEY}&country=in&language={lang}&page=1"
     try:
         response = requests.get(url, timeout=10)
         if response.status_code == 200:
-            articles = response.json().get("articles", [])
+            articles = response.json().get("results", [])
             inserted_count = 0
             for a in articles:
-                if news_collection.count_documents({"url": a["url"]}) == 0:
+                if news_collection.count_documents({"url": a.get("link")}) == 0:
                     news_collection.insert_one({
                         "title": a.get("title", ""),
                         "description": a.get("description", ""),
-                        "url": a["url"],
-                        "image": a.get("image", ""),
-                        "publishedAt": a.get("publishedAt", ""),
+                        "url": a.get("link"),
+                        "image": a.get("image_url", ""),
+                        "publishedAt": a.get("pubDate", ""),
                         "language": lang,
-                        "source": "GNews",
+                        "source": "NewsData.io",
                         "createdAt": datetime.utcnow()
                     })
                     inserted_count += 1
             print(f"[{lang}] Inserted {inserted_count} new articles")
         else:
-            print(f"[{lang}] Failed to fetch news: {response.status_code}")
+            print(f"[{lang}] Failed to fetch news: {response.status_code} {response.text}")
     except Exception as e:
         print(f"[{lang}] Error fetching news: {e}")
 
