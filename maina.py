@@ -168,21 +168,27 @@ async def delete_user(email: str):
     return JSONResponse(status_code=200, content={"status": "success", "message": "Account deleted"})
 
 # ------------------ News Functions ------------------
-def fetch_and_store_news(lang="en"):
+def fetch_and_store_news(lang="en", pages=2):
     url = f"https://newsdata.io/api/1/news?apikey={NEWSDATA_API_KEY}&country=in&language={lang}"
-    try:
-        response = requests.get(url, timeout=10)
-        if response.status_code == 200:
+    page_count = 0
+    inserted_total = 0
+
+    while url and page_count < pages:
+        try:
+            response = requests.get(url, timeout=10)
+            if response.status_code != 200:
+                print(f"[{lang}] Failed: {response.status_code} {response.text}")
+                break
+
             data = response.json()
             articles = data.get("results", [])
-            print(f"[{lang}] API returned {len(articles)} articles")
+            print(f"[{lang}] Page {page_count+1}: {len(articles)} articles")
 
-            inserted_count = 0
             for a in articles:
                 link = a.get("link")
                 if not link:
-                    print(f"[{lang}] Skipping article without link: {a}")
-                    continue  # link is mandatory for uniqueness
+                    print("⚠️ Skipping article without link:", a)
+                    continue
 
                 if news_collection.count_documents({"url": link}) == 0:
                     doc = {
@@ -197,15 +203,23 @@ def fetch_and_store_news(lang="en"):
                     }
                     try:
                         news_collection.insert_one(doc)
-                        inserted_count += 1
-                    except Exception as db_err:
-                        print(f"[{lang}] DB insert failed: {db_err}")
+                        inserted_total += 1
+                    except Exception as e:
+                        print("❌ Insert failed:", e)
 
-            print(f"[{lang}] Inserted {inserted_count} new articles")
-        else:
-            print(f"[{lang}] Failed to fetch news: {response.status_code} {response.text}")
-    except Exception as e:
-        print(f"[{lang}] Error fetching news: {e}")
+            print(f"[{lang}] Inserted {inserted_total} articles so far")
+
+            # go to next page if available
+            next_page = data.get("nextPage")
+            if next_page:
+                url = f"https://newsdata.io/api/1/news?apikey={NEWSDATA_API_KEY}&country=in&language={lang}&page={next_page}"
+                page_count += 1
+            else:
+                break
+
+        except Exception as e:
+            print(f"[{lang}] Error: {e}")
+            break
 
 def cleanup_old_news():
     one_week_ago = datetime.utcnow() - timedelta(days=7)
