@@ -43,15 +43,16 @@ class ResetPasswordRequest(BaseModel):
     otp: str
     new_password: str
 
-# ------------------ Email Helpers ------------------
-@app.get("/health") 
-def health_check(): 
-    return {"status": "ok", "time": datetime.utcnow().isoformat()} 
-    
-@app.head("/health") 
-def health_check_head(): 
+# ------------------ Health ------------------
+@app.get("/health")
+def health_check():
+    return {"status": "ok", "time": datetime.utcnow().isoformat()}
+
+@app.head("/health")
+def health_check_head():
     return {"status": "ok"}
-    
+
+# ------------------ Email Helpers ------------------
 async def send_welcome_email(email: str, full_name: str):
     message = MessageSchema(
         subject="Welcome to Fake News Detector 🎉",
@@ -124,10 +125,9 @@ async def forgot_password(request: ForgotPasswordRequest, background_tasks: Back
 
     otp = str(random.randint(100000, 999999))
     expiry = datetime.utcnow() + timedelta(minutes=5)
-
     collection.update_one({"email": email}, {"$set": {"reset_otp": otp, "reset_expiry": expiry}})
-    background_tasks.add_task(send_otp_email, email, otp)
 
+    background_tasks.add_task(send_otp_email, email, otp)
     return {"status": "success", "message": "OTP sent to email"}
 
 @user_router.post("/reset-password")
@@ -188,13 +188,12 @@ def fetch_and_store_news(lang="en", pages=2):
                 if not link:
                     continue
                 if news_collection.count_documents({"url": link}) == 0:
-                    description = a.get("description","")or ""
-                    if len(description)>150:
-                        description = description[:150].rstrip()+"..."
-                        
+                    description = a.get("description","") or ""
+                    if len(description) > 150:
+                        description = description[:150].rstrip() + "..."
                     doc = {
                         "title": a.get("title", ""),
-                        "description": a.get("description", ""),
+                        "description": description,
                         "url": link,
                         "image": a.get("image_url", ""),
                         "publishedAt": a.get("pubDate", ""),
