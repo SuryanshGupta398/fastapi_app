@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 from fastapi import FastAPI, APIRouter, HTTPException, BackgroundTasks, Query
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, SecretStr
 from passlib.context import CryptContext
 from fastapi_mail import FastMail, MessageSchema, ConnectionConfig, MessageType
 
@@ -20,23 +20,23 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # ------------------ Email Configuration using Gmail OAuth2 ------------------
 MAIL_USERNAME = os.getenv("MAIL_USERNAME")  # Your Gmail email
-CLIENT_ID = os.getenv("CLIENT_ID")
-CLIENT_SECRET = os.getenv("CLIENT_SECRET")
-OAUTH2_REFRESH_TOKEN = os.getenv("OAUTH2_REFRESH_TOKEN")
-OAUTH2_ACCESS_TOKEN = os.getenv("OAUTH2_ACCESS_TOKEN")  # optional if you want
-
-def get_access_token():
-    token_url = "https://oauth2.googleapis.com/token"
-    payload = {
-        "client_id": CLIENT_ID,
-        "client_secret": CLIENT_SECRET,
-        "refresh_token": OAUTH2_REFRESH_TOKEN,
-        "grant_type": "refresh_token"
-    }
-    r = requests.post(token_url, data=payload)
-    r.raise_for_status()
-    token_info = r.json()
-    return token_info["access_token"]
+# CLIENT_ID = os.getenv("CLIENT_ID")
+# CLIENT_SECRET = os.getenv("CLIENT_SECRET")
+# OAUTH2_REFRESH_TOKEN = os.getenv("OAUTH2_REFRESH_TOKEN")
+# OAUTH2_ACCESS_TOKEN = os.getenv("OAUTH2_ACCESS_TOKEN")  # optional if you want
+MAIL_PASSWORD=SecretStr(os.getenv("MAIL_PASSWORD"))
+# def get_access_token():
+#     token_url = "https://oauth2.googleapis.com/token"
+#     payload = {
+#         "client_id": CLIENT_ID,
+#         "client_secret": CLIENT_SECRET,
+#         "refresh_token": OAUTH2_REFRESH_TOKEN,
+#         "grant_type": "refresh_token"
+#     }
+#     r = requests.post(token_url, data=payload)
+#     r.raise_for_status()
+#     token_info = r.json()
+#     return token_info["access_token"]
     
 conf = ConnectionConfig(
     MAIL_USERNAME=MAIL_USERNAME,
@@ -52,6 +52,8 @@ fm = FastMail(conf)
 
 @app.get("/send-test-email")
 async def send_test_email(to_email: str):
+    conf.MAIL_PASSWORD = SecretStr(os.getenv("MAIL_PASSWORD"))
+    
     message = MessageSchema(
         subject="FastAPI Test Email",
         recipients=[to_email],
@@ -87,7 +89,7 @@ def health_check_head():
 
 # ------------------ Email Helpers ------------------
 async def send_welcome_email(email: str, full_name: str):
-    conf.MAIL_PASSWORD = get_access_token()
+    conf.MAIL_PASSWORD = SecretStr(os.getenv("MAIL_PASSWORD"))
     
     message = MessageSchema(
         subject="Welcome to Fake News Detector 🎉",
@@ -102,7 +104,7 @@ async def send_welcome_email(email: str, full_name: str):
         print(f"❌ Failed to send welcome email to {email}: {e}")
 
 async def send_otp_email(email: str, otp: str):
-    conf.MAIL_PASSWORD = get_access_token()
+    conf.MAIL_PASSWORD = SecretStr(os.getenv("MAIL_PASSWORD"))
     
     message = MessageSchema(
         subject="Password Reset OTP",
