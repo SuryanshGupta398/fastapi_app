@@ -4,72 +4,26 @@ import requests
 from datetime import datetime, timedelta
 
 from fastapi import FastAPI, APIRouter, HTTPException, BackgroundTasks, Query
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel, EmailStr, SecretStr
+from pydantic import BaseModel, EmailStr
 from passlib.context import CryptContext
-from fastapi_mail import FastMail, MessageSchema, ConnectionConfig, MessageType
 
 from configuration import collection, news_collection  # MongoDB collections
 from models import User, LoginUser
+from gmail_service import send_email  # Gmail API helper
 
+# ---------------- FastAPI setup ----------------
 app = FastAPI()
 user_router = APIRouter(prefix="/users", tags=["Users"])
 news_router = APIRouter(prefix="/news", tags=["News"])
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-# ------------------ Email Configuration using Gmail OAuth2 ------------------
-MAIL_USERNAME = os.getenv("MAIL_USERNAME")  # Your Gmail email
-# CLIENT_ID = os.getenv("CLIENT_ID")
-# CLIENT_SECRET = os.getenv("CLIENT_SECRET")
-# OAUTH2_REFRESH_TOKEN = os.getenv("OAUTH2_REFRESH_TOKEN")
-# OAUTH2_ACCESS_TOKEN = os.getenv("OAUTH2_ACCESS_TOKEN")  # optional if you want
-MAIL_PASSWORD=os.getenv("MAIL_PASSWORD")
-# def get_access_token():
-#     token_url = "https://oauth2.googleapis.com/token"
-#     payload = {
-#         "client_id": CLIENT_ID,
-#         "client_secret": CLIENT_SECRET,
-#         "refresh_token": OAUTH2_REFRESH_TOKEN,
-#         "grant_type": "refresh_token"
-#     }
-#     r = requests.post(token_url, data=payload)
-#     r.raise_for_status()
-#     token_info = r.json()
-#     return token_info["access_token"]
-    
-conf = ConnectionConfig(
-    MAIL_USERNAME=MAIL_USERNAME,
-    MAIL_PASSWORD=MAIL_PASSWORD,# No password, OAuth2 used
-    MAIL_FROM=MAIL_USERNAME,
-    MAIL_PORT=465,
-    MAIL_SERVER="smtp.gmail.com",
-    MAIL_STARTTLS=False,
-    MAIL_SSL_TLS=True,
-    USE_CREDENTIALS=True,
-)
-fm = FastMail(conf)
-
-@app.get("/send-test-email")
-async def send_test_email(to_email: str):
-    # conf.MAIL_PASSWORD = SecretStr(os.getenv("MAIL_PASSWORD"))
-    
-    message = MessageSchema(
-        subject="FastAPI Test Email",
-        recipients=[to_email],
-        body="<h3>Hello! This is a test email from FastAPI.</h3>",
-        subtype=MessageType.html
-    )
-    try:
-        await fm.send_message(message)
-        return {"status": "success", "message": f"Email sent to {to_email}"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to send email: {e}")
-
-# ------------------ NewsData.io API ------------------
+# ---------------- Environment ----------------
 NEWSDATA_API_KEY = os.getenv("NEWSDATA_API_KEY")
+CRON_SECRET = os.getenv("CRON_SECRET")
 
-# ------------------ Request Models ------------------
+
+# ---------------- Request Models ----------------
 class ForgotPasswordRequest(BaseModel):
     email: EmailStr
 
@@ -78,7 +32,8 @@ class ResetPasswordRequest(BaseModel):
     otp: str
     new_password: str
 
-# ------------------ Health ------------------
+
+# ---------------- Health Routes ----------------
 @app.get("/health")
 def health_check():
     return {"status": "ok", "time": datetime.utcnow().isoformat()}
@@ -87,38 +42,20 @@ def health_check():
 def health_check_head():
     return {"status": "ok"}
 
-# ------------------ Email Helpers ------------------
+
+# ---------------- Email Helpers ----------------
 async def send_welcome_email(email: str, full_name: str):
-    # conf.MAIL_PASSWORD = SecretStr(os.getenv("MAIL_PASSWORD"))
-    
-    message = MessageSchema(
-        subject="Welcome to Fake News Detector 🎉",
-        recipients=[email],
-        body=f"<h2>Hello {full_name},</h2><p>Thank you for signing up!</p>",
-        subtype=MessageType.html
-    )
-    try:
-        await fm.send_message(message)
-        print(f"✅ Welcome email sent to {email}")
-    except Exception as e:
-        print(f"❌ Failed to send welcome email to {email}: {e}")
+    subject = "Welcome to Fake News Detector 🎉"
+    body = f"<h2>Hello {full_name},</h2><p>Thank you for signing up!</p>"
+    send_email(email, subject, body)
 
 async def send_otp_email(email: str, otp: str):
-    # conf.MAIL_PASSWORD = SecretStr(os.getenv("MAIL_PASSWORD"))
-    
-    message = MessageSchema(
-        subject="Password Reset OTP",
-        recipients=[email],
-        body=f"<h2>Password Reset</h2><p>Your OTP is: <b>{otp}</b></p><p>Valid for 5 minutes.</p>",
-        subtype=MessageType.html
-    )
-    try:
-        await fm.send_message(message)
-        print(f"✅ OTP email sent to {email}")
-    except Exception as e:
-        print(f"❌ Failed to send OTP email to {email}: {e}")
+    subject = "Password Reset OTP"
+    body = f"<h2>Password Reset</h2><p>Your OTP is: <b>{otp}</b></p><p>Valid for 5 minutes.</p>"
+    send_email(email, subject, body)
 
-# ------------------ User Routes ------------------
+
+# ---------------- User Routes ----------------
 @user_router.post("/register")
 async def register_user(new_user: User, background_tasks: BackgroundTasks):
     email = new_user.email.strip().lower()
@@ -190,7 +127,10 @@ async def reset_password(request: ResetPasswordRequest):
         raise HTTPException(status_code=400, detail="Invalid OTP")
 
     hashed_password = pwd_context.hash(request.new_password)
-    collection.update_one({"email": email}, {"$set": {"password": hashed_password}, "$unset": {"reset_otp": "", "reset_expiry": ""}})
+    collection.update_one(
+        {"email": email},
+        {"$set": {"password": hashed_password}, "$unset": {"reset_otp": "", "reset_expiry": ""}}
+    )
 
     return {"status": "success", "message": "Password reset successfully"}
 
@@ -202,7 +142,8 @@ async def delete_user(email: str):
         raise HTTPException(status_code=404, detail="User not found")
     return {"status": "success", "message": "Account deleted"}
 
-# ------------------ News Functions ------------------
+
+# ---------------- News Functions ----------------
 def fetch_and_store_news(lang="en", pages=2):
     if not NEWSDATA_API_KEY:
         print("❌ No API key found for NewsData.io")
@@ -256,13 +197,15 @@ def fetch_and_store_news(lang="en", pages=2):
 
     print(f"[{lang}] ✅ Inserted {inserted_total} news articles")
 
+
 def cleanup_old_news():
     one_week_ago = datetime.utcnow() - timedelta(days=7)
     result = news_collection.delete_many({"createdAt": {"$lt": one_week_ago}})
     print(f"🧹 Deleted {result.deleted_count} old news articles")
     return result.deleted_count
 
-# ------------------ News Routes ------------------
+
+# ---------------- News Routes ----------------
 @news_router.get("/")
 def get_news(language: str = "en", limit: int = 20):
     news = list(news_collection.find({"language": language}).sort("createdAt", -1).limit(limit))
@@ -279,14 +222,14 @@ def get_all_news():
 
 @news_router.get("/refresh")
 def refresh_news(secret: str = Query(...)):
-    cron_secret = os.getenv("CRON_SECRET")
-    if secret != cron_secret:
+    if secret != CRON_SECRET:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     fetch_and_store_news("en")
     fetch_and_store_news("hi")
     return {"status": "success", "message": "News refreshed"}
 
-# ------------------ Include Routers ------------------
+
+# ---------------- Include Routers ----------------
 app.include_router(user_router)
 app.include_router(news_router)
