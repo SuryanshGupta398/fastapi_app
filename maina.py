@@ -18,18 +18,31 @@ news_router = APIRouter(prefix="/news", tags=["News"])
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-# ------------------ Email Configuration ------------------
+# ------------------ Email Configuration using Gmail OAuth2 ------------------
+MAIL_USERNAME = os.getenv("MAIL_USERNAME")  # Your Gmail email
+CLIENT_ID = os.getenv("CLIENT_ID")
+CLIENT_SECRET = os.getenv("CLIENT_SECRET")
+OAUTH2_REFRESH_TOKEN = os.getenv("OAUTH2_REFRESH_TOKEN")
+OAUTH2_ACCESS_TOKEN = os.getenv("OAUTH2_ACCESS_TOKEN")  # optional if you want
+
 conf = ConnectionConfig(
-    MAIL_USERNAME=os.getenv("MAIL_USERNAME"),
-    MAIL_PASSWORD=os.getenv("MAIL_PASSWORD"),  # Gmail App Password
-    MAIL_FROM=os.getenv("MAIL_FROM"),
+    MAIL_USERNAME=MAIL_USERNAME,
+    MAIL_PASSWORD=None,  # No password, OAuth2 used
+    MAIL_FROM=MAIL_USERNAME,
     MAIL_PORT=587,
     MAIL_SERVER="smtp.gmail.com",
     MAIL_STARTTLS=True,
     MAIL_SSL_TLS=False,
-    USE_CREDENTIALS=True
+    USE_CREDENTIALS=True,
+    MAIL_OAUTH2_TOKEN={
+        "client_id": CLIENT_ID,
+        "client_secret": CLIENT_SECRET,
+        "refresh_token": OAUTH2_REFRESH_TOKEN,
+        "access_token": OAUTH2_ACCESS_TOKEN,
+    }
 )
 fm = FastMail(conf)
+
 @app.get("/send-test-email")
 async def send_test_email(to_email: str):
     message = MessageSchema(
@@ -43,6 +56,7 @@ async def send_test_email(to_email: str):
         return {"status": "success", "message": f"Email sent to {to_email}"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to send email: {e}")
+
 # ------------------ NewsData.io API ------------------
 NEWSDATA_API_KEY = os.getenv("NEWSDATA_API_KEY")
 
