@@ -40,7 +40,7 @@ MAIL_PASSWORD=SecretStr(os.getenv("MAIL_PASSWORD"))
     
 conf = ConnectionConfig(
     MAIL_USERNAME=MAIL_USERNAME,
-    MAIL_PASSWORD=get_access_token(),# No password, OAuth2 used
+    MAIL_PASSWORD=MAIL_PASSWORD,# No password, OAuth2 used
     MAIL_FROM=MAIL_USERNAME,
     MAIL_PORT=587,
     MAIL_SERVER="smtp.gmail.com",
