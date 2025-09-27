@@ -5,11 +5,11 @@ pydantic[email]==2.9.2
 python-dotenv==1.0.1
 passlib[bcrypt]==1.7.4
 bcrypt==3.2.2
-fastapi-mail==1.4.1
-google-auth==2.23.0
-google-auth-oauthlib==1.0.0
-google-auth-httplib2==0.1.0
 python-jose[cryptography]==3.3.0
 python-multipart==0.0.9
 apscheduler==3.10.4
 requests==2.32.3
+google-api-python-client==2.100.0
+google-auth==2.23.0
+google-auth-oauthlib==1.0.0
+google-auth-httplib2==0.1.0
