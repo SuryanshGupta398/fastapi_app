@@ -30,7 +30,19 @@ conf = ConnectionConfig(
     USE_CREDENTIALS=True
 )
 fm = FastMail(conf)
-
+@app.get("/send-test-email")
+async def send_test_email(to_email: str):
+    message = MessageSchema(
+        subject="FastAPI Test Email",
+        recipients=[to_email],
+        body="<h3>Hello! This is a test email from FastAPI.</h3>",
+        subtype=MessageType.html
+    )
+    try:
+        await fm.send_message(message)
+        return {"status": "success", "message": f"Email sent to {to_email}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to send email: {e}")
 # ------------------ NewsData.io API ------------------
 NEWSDATA_API_KEY = os.getenv("NEWSDATA_API_KEY")
 
