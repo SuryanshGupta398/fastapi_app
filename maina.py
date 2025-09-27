@@ -208,16 +208,19 @@ def fetch_and_store_news(lang="en", pages=2):
             print(f"[{lang}] Page {page_count+1}: received {len(articles)} articles")
 
             for a in articles:
+                # Correct keys for NewsData.io
                 link = a.get("link")
                 if not link:
                     continue
+
+                # Avoid duplicates
                 if news_collection.count_documents({"url": link}) == 0:
                     doc = {
                         "title": a.get("title", ""),
                         "description": a.get("description", ""),
                         "url": link,
-                        "image": a.get("image_url", ""),
-                        "publishedAt": a.get("pubDate", ""),
+                        "image": a.get("image_url", ""),  # NewsData.io key
+                        "publishedAt": a.get("pubDate", ""),  # NewsData.io key
                         "language": lang,
                         "source": "NewsData.io",
                         "createdAt": datetime.utcnow()
@@ -227,6 +230,7 @@ def fetch_and_store_news(lang="en", pages=2):
 
             print(f"[{lang}] Inserted so far: {inserted_total}")
 
+            # Pagination: NewsData.io uses nextPage as a page number
             next_page = data.get("nextPage")
             if next_page:
                 url = f"https://newsdata.io/api/1/news?apikey={NEWSDATA_API_KEY}&country=in&language={lang}&page={next_page}"
