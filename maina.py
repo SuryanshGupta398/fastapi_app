@@ -1,4 +1,4 @@
-import os
+ import os
 import random
 import requests
 from datetime import datetime, timedelta
@@ -255,10 +255,14 @@ def get_all_news():
         n["_id"] = str(n["_id"])
     return {"count": len(news), "articles": news}
 
-@news_router.api_route("/refresh", methods=["GET", "POST","HEAD"])
-def refresh_news(secret: str = Query(...)):
+@news_router.api_route("/refresh", methods=["GET", "POST", "HEAD"])
+def refresh_news(request: Request, secret: str = Query(...)):
+    if request.method == "HEAD":
+        return {"status": "ok"}  # respond without fetching
+    
     if secret != CRON_SECRET:
         raise HTTPException(status_code=401, detail="Unauthorized")
+
     fetch_and_store_news("en")
     fetch_and_store_news("hi")
     return {"status": "success", "message": "News refreshed"}
