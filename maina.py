@@ -44,6 +44,13 @@ class ResetPasswordRequest(BaseModel):
     new_password: str
 
 # ------------------ Email Helpers ------------------
+@app.get("/health") 
+def health_check(): 
+    return {"status": "ok", "time": datetime.utcnow().isoformat()} 
+    
+@app.head("/health") def health_check_head(): 
+    return {"status": "ok"}
+    
 async def send_welcome_email(email: str, full_name: str):
     message = MessageSchema(
         subject="Welcome to Fake News Detector 🎉",
@@ -180,6 +187,10 @@ def fetch_and_store_news(lang="en", pages=2):
                 if not link:
                     continue
                 if news_collection.count_documents({"url": link}) == 0:
+                    description = a.get("description","")or ""
+                    if len(description)>150:
+                        description = description[:150].rstrip()+"..."
+                        
                     doc = {
                         "title": a.get("title", ""),
                         "description": a.get("description", ""),
