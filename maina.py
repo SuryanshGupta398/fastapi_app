@@ -48,7 +48,8 @@ class ResetPasswordRequest(BaseModel):
 def health_check(): 
     return {"status": "ok", "time": datetime.utcnow().isoformat()} 
     
-@app.head("/health") def health_check_head(): 
+@app.head("/health") 
+def health_check_head(): 
     return {"status": "ok"}
     
 async def send_welcome_email(email: str, full_name: str):
