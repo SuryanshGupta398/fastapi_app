@@ -24,7 +24,7 @@ MAIL_USERNAME = os.getenv("MAIL_USERNAME")  # Your Gmail email
 # CLIENT_SECRET = os.getenv("CLIENT_SECRET")
 # OAUTH2_REFRESH_TOKEN = os.getenv("OAUTH2_REFRESH_TOKEN")
 # OAUTH2_ACCESS_TOKEN = os.getenv("OAUTH2_ACCESS_TOKEN")  # optional if you want
-MAIL_PASSWORD=SecretStr(os.getenv("MAIL_PASSWORD"))
+MAIL_PASSWORD=os.getenv("MAIL_PASSWORD")
 # def get_access_token():
 #     token_url = "https://oauth2.googleapis.com/token"
 #     payload = {
@@ -52,7 +52,7 @@ fm = FastMail(conf)
 
 @app.get("/send-test-email")
 async def send_test_email(to_email: str):
-    conf.MAIL_PASSWORD = SecretStr(os.getenv("MAIL_PASSWORD"))
+    # conf.MAIL_PASSWORD = SecretStr(os.getenv("MAIL_PASSWORD"))
     
     message = MessageSchema(
         subject="FastAPI Test Email",
@@ -89,7 +89,7 @@ def health_check_head():
 
 # ------------------ Email Helpers ------------------
 async def send_welcome_email(email: str, full_name: str):
-    conf.MAIL_PASSWORD = SecretStr(os.getenv("MAIL_PASSWORD"))
+    # conf.MAIL_PASSWORD = SecretStr(os.getenv("MAIL_PASSWORD"))
     
     message = MessageSchema(
         subject="Welcome to Fake News Detector 🎉",
@@ -104,7 +104,7 @@ async def send_welcome_email(email: str, full_name: str):
         print(f"❌ Failed to send welcome email to {email}: {e}")
 
 async def send_otp_email(email: str, otp: str):
-    conf.MAIL_PASSWORD = SecretStr(os.getenv("MAIL_PASSWORD"))
+    # conf.MAIL_PASSWORD = SecretStr(os.getenv("MAIL_PASSWORD"))
     
     message = MessageSchema(
         subject="Password Reset OTP",
