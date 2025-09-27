@@ -3,7 +3,7 @@ import random
 import requests
 from datetime import datetime, timedelta
 
-from fastapi import FastAPI, APIRouter, HTTPException, Query, BackgroundTasks,Request
+from fastapi import FastAPI, APIRouter, HTTPException, Query, BackgroundTasks, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, EmailStr
 from passlib.context import CryptContext
@@ -22,13 +22,13 @@ news_router = APIRouter(prefix="/news", tags=["News"])
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # ------------------ NewsData API Key ------------------
-NEWSDATA_API_KEY = os.getenv("GNEWS_KEY")  # NewsData.io API key
+NEWSDATA_API_KEY = os.getenv("NEWSDATA_API_KEY")  # make sure .env matches this name
 
 # ------------------ Gmail SMTP Email Configuration ------------------
 conf = ConnectionConfig(
-    MAIL_USERNAME=os.getenv("MAIL_USERNAME"),  # your Gmail email
-    MAIL_PASSWORD=os.getenv("MAIL_PASSWORD"),  # Gmail App Password
-    MAIL_FROM=os.getenv("MAIL_FROM"),          # same as MAIL_USERNAME
+    MAIL_USERNAME=os.getenv("MAIL_USERNAME"),
+    MAIL_PASSWORD=os.getenv("MAIL_PASSWORD"),
+    MAIL_FROM=os.getenv("MAIL_FROM"),
     MAIL_PORT=587,
     MAIL_SERVER="smtp.gmail.com",
     MAIL_STARTTLS=True,
@@ -50,26 +50,23 @@ class ResetPasswordRequest(BaseModel):
     new_password: str
 
 # ------------------ Health Check ------------------
-@app.api_route("/health", methods=["GET", "HEAD"])
-def health_check(request: Request):
-    # For HEAD requests, return minimal response
-    if request.method == "HEAD":
-        return {"status": "ok"}  # FastAPI will return empty body with 200
+@app.get("/health")
+def health_check():
     return {"status": "ok", "time": datetime.utcnow().isoformat()}
+
+@app.head("/health")
+def health_check_head():
+    return {"status": "ok"}
+
 # ------------------ Email Sending Functions ------------------
 async def send_welcome_email(email: str, full_name: str):
     message = MessageSchema(
         subject="Welcome to Fake News Detector 🎉",
-        recipients=[email],  # use email param
-        body=f"""<h2>Hello {full_name},</h2>  <!-- use full_name param -->
-        <p>Thank you for signing up with <b>Fake News Detector</b>! We’re excited to have you join our mission of making the internet safer.</p>
-        <ul>
-            <li>✅ Instantly check if a news article is genuine</li>
-            <li>✅ Stay updated with verified news sources</li>
-            <li>✅ Report suspicious content</li>
-        </ul>
-        <p>Welcome once again, and thank you for trusting us.</p>
-        <br><p>Best regards,<br>The Multiverse Team</p>""",
+        recipients=[email],
+        body=f"""
+        <h2>Hello {full_name},</h2>
+        <p>Thank you for signing up with <b>Fake News Detector</b>!</p>
+        """,
         subtype=MessageType.html
     )
     try:
@@ -82,7 +79,7 @@ async def send_otp_email(email: str, otp: str):
     message = MessageSchema(
         subject="Password Reset OTP",
         recipients=[email],
-        body=f"<h2>Password Reset Request</h2><p>Your OTP is: <b>{otp}</b></p><p>Valid for 5 minutes.</p>",
+        body=f"<h2>Password Reset</h2><p>Your OTP: <b>{otp}</b></p>",
         subtype=MessageType.html
     )
     try:
@@ -106,7 +103,6 @@ async def register_user(new_user: User, background_tasks: BackgroundTasks):
     user_dict["created_at"] = datetime.utcnow()
     collection.insert_one(user_dict)
 
-    # send welcome email in background
     background_tasks.add_task(send_welcome_email, email, new_user.full_name)
 
     return JSONResponse(status_code=200, content={"status": "success", "message": "User registered successfully"})
@@ -117,12 +113,15 @@ async def signin_user(login_user: LoginUser):
     user_in_db = collection.find_one({"email": email})
     if not user_in_db or not pwd_context.verify(login_user.password, user_in_db["password"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
-    user_data = {
-        "full_name": user_in_db.get("full_name", ""),
-        "username": user_in_db.get("username", ""),
-        "email": user_in_db["email"]
+    return {
+        "status": "success",
+        "message": "Login successful",
+        "user": {
+            "full_name": user_in_db.get("full_name", ""),
+            "username": user_in_db.get("username", ""),
+            "email": user_in_db["email"]
+        }
     }
-    return {"status": "success", "message": "Login successful", "user": user_data}
 
 @user_router.post("/forgot-password")
 async def forgot_password(request: ForgotPasswordRequest, background_tasks: BackgroundTasks):
@@ -135,7 +134,7 @@ async def forgot_password(request: ForgotPasswordRequest, background_tasks: Back
     otp_in_db = user.get("reset_otp")
     expiry_in_db = user.get("reset_expiry")
     if isinstance(expiry_in_db, str):
-        expiry_in_db = datetime.fromisoformat(expiry_in_db) if expiry_in_db else None
+        expiry_in_db = datetime.fromisoformat(expiry_in_db)
 
     if otp_in_db and expiry_in_db and expiry_in_db > now:
         otp_to_send = otp_in_db
@@ -148,7 +147,6 @@ async def forgot_password(request: ForgotPasswordRequest, background_tasks: Back
         )
 
     background_tasks.add_task(send_otp_email, email, otp_to_send)
-
     return {"status": "success", "message": "OTP sent to email"}
 
 @user_router.post("/reset-password")
@@ -162,12 +160,11 @@ async def reset_password(request: ResetPasswordRequest):
     expiry_in_db = user.get("reset_expiry")
     if isinstance(expiry_in_db, str):
         expiry_in_db = datetime.fromisoformat(expiry_in_db)
-    now = datetime.utcnow()
 
     if not otp_in_db or not expiry_in_db:
-        raise HTTPException(status_code=400, detail="OTP not generated. Request a new one.")
-    if now > expiry_in_db:
-        raise HTTPException(status_code=400, detail="OTP expired. Request a new one.")
+        raise HTTPException(status_code=400, detail="OTP not generated")
+    if datetime.utcnow() > expiry_in_db:
+        raise HTTPException(status_code=400, detail="OTP expired")
     if request.otp != otp_in_db:
         raise HTTPException(status_code=400, detail="Invalid OTP")
 
@@ -188,20 +185,27 @@ async def delete_user(email: str):
 
 # ------------------ News Functions ------------------
 def fetch_and_store_news(lang="en", pages=2):
+    if not NEWSDATA_API_KEY:
+        print("❌ No API key found. Check your .env file (NEWSDATA_API_KEY).")
+        return
+
     url = f"https://newsdata.io/api/1/news?apikey={NEWSDATA_API_KEY}&country=in&language={lang}"
     page_count = 0
     inserted_total = 0
 
     while url and page_count < pages:
         try:
+            print("🔗 Requesting:", url)
             response = requests.get(url, timeout=10)
+            print("📡 Status:", response.status_code)
+
             if response.status_code != 200:
                 print(f"[{lang}] Failed: {response.status_code} {response.text}")
                 break
 
             data = response.json()
             articles = data.get("results", [])
-            print(f"[{lang}] Page {page_count+1}: {len(articles)} articles")
+            print(f"[{lang}] Page {page_count+1}: received {len(articles)} articles")
 
             for a in articles:
                 link = a.get("link")
@@ -221,6 +225,8 @@ def fetch_and_store_news(lang="en", pages=2):
                     news_collection.insert_one(doc)
                     inserted_total += 1
 
+            print(f"[{lang}] Inserted so far: {inserted_total}")
+
             next_page = data.get("nextPage")
             if next_page:
                 url = f"https://newsdata.io/api/1/news?apikey={NEWSDATA_API_KEY}&country=in&language={lang}&page={next_page}"
@@ -232,12 +238,12 @@ def fetch_and_store_news(lang="en", pages=2):
             print(f"[{lang}] Error: {e}")
             break
 
-    print(f"[{lang}] Inserted {inserted_total} articles total")
+    print(f"[{lang}] ✅ Finished. Inserted {inserted_total} articles.")
 
 def cleanup_old_news():
     one_week_ago = datetime.utcnow() - timedelta(days=7)
     result = news_collection.delete_many({"createdAt": {"$lt": one_week_ago}})
-    print(f"Deleted {result.deleted_count} old news articles")
+    print(f"🧹 Deleted {result.deleted_count} old news articles")
     return result.deleted_count
 
 # ------------------ News Routes ------------------
@@ -255,11 +261,13 @@ def get_all_news():
         n["_id"] = str(n["_id"])
     return {"count": len(news), "articles": news}
 
-@news_router.api_route("/refresh", methods=["GET", "POST", "HEAD"])
-def refresh_news(request: Request, secret: str = Query(...)):
-    if request.method == "HEAD":
-        return {"status": "ok"}  # respond without fetching
-    
+@news_router.head("/refresh")
+def refresh_news_head():
+    return {"status": "ok"}
+
+@news_router.get("/refresh")
+@news_router.post("/refresh")
+def refresh_news(secret: str = Query(...)):
     if secret != CRON_SECRET:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
@@ -269,11 +277,11 @@ def refresh_news(request: Request, secret: str = Query(...)):
 
 # ------------------ Scheduler ------------------
 scheduler = BackgroundScheduler()
-scheduler.add_job(lambda: fetch_and_store_news("en"), 'interval', minutes=30, id="refresh_en_news")
-scheduler.add_job(lambda: fetch_and_store_news("hi"), 'interval', minutes=30, id="refresh_hi_news")
-scheduler.add_job(cleanup_old_news, 'interval', hours=24, id="cleanup_old_news")
+scheduler.add_job(lambda: fetch_and_store_news("en"), "interval", minutes=30, id="refresh_en_news")
+scheduler.add_job(lambda: fetch_and_store_news("hi"), "interval", minutes=30, id="refresh_hi_news")
+scheduler.add_job(cleanup_old_news, "interval", hours=24, id="cleanup_old_news")
 scheduler.start()
-print("Scheduler started")
+print("⏰ Scheduler started")
 
 # ------------------ Include Routers ------------------
 app.include_router(user_router)
