@@ -42,10 +42,10 @@ conf = ConnectionConfig(
     MAIL_USERNAME=MAIL_USERNAME,
     MAIL_PASSWORD=MAIL_PASSWORD,# No password, OAuth2 used
     MAIL_FROM=MAIL_USERNAME,
-    MAIL_PORT=587,
+    MAIL_PORT=465,
     MAIL_SERVER="smtp.gmail.com",
-    MAIL_STARTTLS=True,
-    MAIL_SSL_TLS=False,
+    MAIL_STARTTLS=False,
+    MAIL_SSL_TLS=True,
     USE_CREDENTIALS=True,
 )
 fm = FastMail(conf)
