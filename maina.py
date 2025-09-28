@@ -138,7 +138,7 @@ async def delete_user(email: str):
     return {"status": "success", "message": "Account deleted"}
 
 # ---------------- News Functions ----------------
-def fetch_and_store_news(lang="en", pages=5):
+def fetch_and_store_news(lang="en", pages=2):
     if not NEWSDATA_API_KEY:
         print("❌ No API key found for NewsData.io")
         return
@@ -161,21 +161,30 @@ def fetch_and_store_news(lang="en", pages=5):
                 link = a.get("link")
                 if not link:
                     continue
-                if news_collection.count_documents({"url": link}) == 0:
-                    description = a.get("description","") or ""
-                    if len(description) > 150:
-                        description = description[:150].rstrip() + "..."
-                    doc = {
-                        "title": a.get("title", ""),
-                        "description": description,
-                        "url": link,
-                        "image": a.get("image_url", ""),
-                        "publishedAt": a.get("pubDate", ""),
-                        "language": lang,
-                        "source": "NewsData.io",
-                        "createdAt": datetime.utcnow()
-                    }
-                    news_collection.insert_one(doc)
+
+                description = a.get("description", "") or ""
+                if len(description) > 150:
+                    description = description[:150].rstrip() + "..."
+
+                doc = {
+                    "title": a.get("title", ""),
+                    "description": description,
+                    "url": link,
+                    "image": a.get("image_url", ""),
+                    "publishedAt": a.get("pubDate", ""),
+                    "language": lang,
+                    "source": "NewsData.io",
+                    "createdAt": datetime.utcnow()
+                }
+
+                # ✅ Upsert to avoid duplicates
+                result = news_collection.update_one(
+                    {"url": link},
+                    {"$setOnInsert": doc},
+                    upsert=True
+                )
+
+                if result.upserted_id:
                     inserted_total += 1
 
             next_page = data.get("nextPage")
@@ -189,7 +198,7 @@ def fetch_and_store_news(lang="en", pages=5):
             print(f"[{lang}] Error: {e}")
             break
 
-    print(f"[{lang}] ✅ Inserted {inserted_total} news articles")
+    print(f"[{lang}] ✅ Inserted {inserted_total} new news articles")
 
 def cleanup_old_news():
     one_week_ago = datetime.utcnow() - timedelta(days=7)
