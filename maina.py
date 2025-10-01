@@ -138,7 +138,7 @@ async def delete_user(email: str):
     return {"status": "success", "message": "Account deleted"}
 
 # ---------------- News Functions ----------------
-def fetch_and_store_news(lang="en", pages=3):
+def fetch_and_store_news(lang="en", pages=2):
     if not NEWSDATA_API_KEY:
         print("❌ No API key found for NewsData.io")
         return
