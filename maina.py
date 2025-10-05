@@ -152,16 +152,48 @@ async def delete_user(email: str):
 # ---------------- Categorization Helper ----------------
 def categorize_article(article):
     text = (article.get("title", "") + " " + article.get("description", "")).lower()
+
+    # Weighted keywords
     categories = {
-        "Sports": ["match", "cricket", "football", "tournament", "goal", "team", "player", "score"],
-        "Entertainment": ["movie", "film", "actor", "actress", "song", "celebrity", "show", "bollywood", "music"],
-        "Food": ["dish", "recipe", "restaurant", "cook", "chef", "food", "taste", "meal"],
-        "Crime": ["murder", "arrest", "police", "scam", "fraud", "theft", "investigation", "crime"],
-        "International": ["global", "world", "foreign", "united nations", "international", "country", "overseas"]
+        "Sports": {
+            "match": 3, "cricket": 4, "football": 4, "tournament": 3, "goal": 2,
+            "team": 2, "player": 2, "score": 2, "olympics": 3, "league": 2
+        },
+        "Entertainment": {
+            "movie": 4, "film": 3, "actor": 3, "actress": 3, "song": 2,
+            "celebrity": 2, "show": 3, "bollywood": 3, "music": 2, "series": 3
+        },
+        "Food": {
+            "dish": 3, "recipe": 3, "restaurant": 3, "cook": 2, "chef": 3,
+            "food": 3, "taste": 2, "meal": 2, "cuisine": 3
+        },
+        "Crime": {
+            "murder": 4, "arrest": 3, "police": 3, "scam": 3, "fraud": 3,
+            "theft": 3, "investigation": 3, "crime": 4
+        },
+        "International": {
+            "global": 3, "world": 3, "foreign": 3, "united nations": 4,
+            "international": 3, "country": 2, "overseas": 2, "diplomacy": 3
+        }
     }
-    scores = {cat: sum(word in text for word in words) for cat, words in categories.items()}
+
+    scores = {}
+    for category, keywords in categories.items():
+        score = 0
+        for word, weight in keywords.items():
+            # count occurrences and multiply by weight
+            score += text.count(word.lower()) * weight
+        scores[category] = score
+
+    # Pick the highest score
     best_category = max(scores, key=scores.get)
+
+    # If no keywords matched, assign "Other"
+    if scores[best_category] == 0:
+        return "Other"
+
     return best_category
+
 
 # ---------------- News Functions ----------------
 def fetch_and_store_news(lang="en", pages=2):
