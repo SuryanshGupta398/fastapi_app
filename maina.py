@@ -5,7 +5,6 @@ from datetime import datetime, timedelta
 from fastapi import FastAPI, APIRouter, HTTPException, BackgroundTasks, Query
 from pydantic import BaseModel, EmailStr
 from passlib.context import CryptContext
-from typing import Optional, List
 
 from configuration import collection, news_collection  # MongoDB collections
 from models import User, LoginUser
@@ -31,18 +30,6 @@ class ResetPasswordRequest(BaseModel):
     otp: str
     new_password: str
 
-# ---------------- News Response Model ----------------
-class NewsItem(BaseModel):
-    title: str
-    description: Optional[str] = ""
-    url: str
-    image: Optional[str] = ""
-    publishedAt: Optional[str] = ""
-    language: str
-    source: Optional[str] = ""
-    category: str
-    createdAt: Optional[datetime] = None
-
 # ---------------- Health Routes ----------------
 @app.get("/health")
 def health_check():
@@ -56,6 +43,7 @@ def health_check_head():
 async def send_welcome_email(email: str, full_name: str):
     subject = "Welcome to Fake News Detector 🎉"
     body = f"<h2>Hello {full_name},</h2><p>Thank you for signing up!</p>"
+    # run blocking send_email in background
     from fastapi.concurrency import run_in_threadpool
     await run_in_threadpool(send_email, email, subject, body)
 
@@ -149,52 +137,6 @@ async def delete_user(email: str):
         raise HTTPException(status_code=404, detail="User not found")
     return {"status": "success", "message": "Account deleted"}
 
-# ---------------- Categorization Helper ----------------
-def categorize_article(article):
-    text = (article.get("title", "") + " " + article.get("description", "")).lower()
-
-    # Weighted keywords
-    categories = {
-        "Sports": {
-            "match": 3, "cricket": 4, "football": 4, "tournament": 3, "goal": 2,
-            "team": 2, "player": 2, "score": 2, "olympics": 3, "league": 2
-        },
-        "Entertainment": {
-            "movie": 4, "film": 3, "actor": 3, "actress": 3, "song": 2,
-            "celebrity": 2, "show": 3, "bollywood": 3, "music": 2, "series": 3
-        },
-        "Food": {
-            "dish": 3, "recipe": 3, "restaurant": 3, "cook": 2, "chef": 3,
-            "food": 3, "taste": 2, "meal": 2, "cuisine": 3
-        },
-        "Crime": {
-            "murder": 4, "arrest": 3, "police": 3, "scam": 3, "fraud": 3,
-            "theft": 3, "investigation": 3, "crime": 4
-        },
-        "International": {
-            "global": 3, "world": 3, "foreign": 3, "united nations": 4,
-            "international": 3, "country": 2, "overseas": 2, "diplomacy": 3
-        }
-    }
-
-    scores = {}
-    for category, keywords in categories.items():
-        score = 0
-        for word, weight in keywords.items():
-            # count occurrences and multiply by weight
-            score += text.count(word.lower()) * weight
-        scores[category] = score
-
-    # Pick the highest score
-    best_category = max(scores, key=scores.get)
-
-    # If no keywords matched, assign "Other"
-    if scores[best_category] == 0:
-        return "Other"
-
-    return best_category
-
-
 # ---------------- News Functions ----------------
 def fetch_and_store_news(lang="en", pages=2):
     if not NEWSDATA_API_KEY:
@@ -224,8 +166,6 @@ def fetch_and_store_news(lang="en", pages=2):
                 if len(description) > 150:
                     description = description[:150].rstrip() + "..."
 
-                category = categorize_article(a)
-
                 doc = {
                     "title": a.get("title", ""),
                     "description": description,
@@ -234,10 +174,10 @@ def fetch_and_store_news(lang="en", pages=2):
                     "publishedAt": a.get("pubDate", ""),
                     "language": lang,
                     "source": "NewsData.io",
-                    "category": category,  # ✅ store category!
                     "createdAt": datetime.utcnow()
                 }
 
+                # ✅ Upsert to avoid duplicates
                 result = news_collection.update_one(
                     {"url": link},
                     {"$setOnInsert": doc},
@@ -267,30 +207,19 @@ def cleanup_old_news():
     return result.deleted_count
 
 # ---------------- News Routes ----------------
-@news_router.get("/", response_model=List[NewsItem])
+@news_router.get("/")
 def get_news(language: str = "en", limit: int = 20):
     news = list(news_collection.find({"language": language}).sort("createdAt", -1).limit(limit))
     for n in news:
         n["_id"] = str(n["_id"])
-    return news
+    return {"articles": news}
 
-@news_router.get("/all", response_model=List[NewsItem])
+@news_router.get("/all")
 def get_all_news():
     news = list(news_collection.find().sort("createdAt", -1))
     for n in news:
         n["_id"] = str(n["_id"])
-    return news
-
-@news_router.get("/category/{category_name}", response_model=List[NewsItem])
-def get_news_by_category(category_name: str, language: str = "en", limit: int = 20):
-    # case-insensitive search
-    news = list(news_collection.find({
-        "language": language,
-        "category": {"$regex": f"^{category_name}$", "$options": "i"}
-    }).sort("createdAt", -1).limit(limit))
-    for n in news:
-        n["_id"] = str(n["_id"])
-    return news
+    return {"count": len(news), "articles": news}
 
 @news_router.get("/refresh")
 def refresh_news(secret: str = Query(...)):
