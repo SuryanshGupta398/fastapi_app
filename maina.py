@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from fastapi import FastAPI, APIRouter, HTTPException, BackgroundTasks, Query
 from pydantic import BaseModel, EmailStr
 from passlib.context import CryptContext
+from typing import Optional, List
 
 from configuration import collection, news_collection  # MongoDB collections
 from models import User, LoginUser
@@ -30,6 +31,18 @@ class ResetPasswordRequest(BaseModel):
     otp: str
     new_password: str
 
+# ---------------- News Response Model ----------------
+class NewsItem(BaseModel):
+    title: str
+    description: Optional[str] = ""
+    url: str
+    image: Optional[str] = ""
+    publishedAt: Optional[str] = ""
+    language: str
+    source: Optional[str] = ""
+    category: str
+    createdAt: Optional[datetime] = None
+
 # ---------------- Health Routes ----------------
 @app.get("/health")
 def health_check():
@@ -43,7 +56,6 @@ def health_check_head():
 async def send_welcome_email(email: str, full_name: str):
     subject = "Welcome to Fake News Detector 🎉"
     body = f"<h2>Hello {full_name},</h2><p>Thank you for signing up!</p>"
-    # run blocking send_email in background
     from fastapi.concurrency import run_in_threadpool
     await run_in_threadpool(send_email, email, subject, body)
 
@@ -140,7 +152,6 @@ async def delete_user(email: str):
 # ---------------- Categorization Helper ----------------
 def categorize_article(article):
     text = (article.get("title", "") + " " + article.get("description", "")).lower()
-
     categories = {
         "Sports": ["match", "cricket", "football", "tournament", "goal", "team", "player", "score"],
         "Entertainment": ["movie", "film", "actor", "actress", "song", "celebrity", "show", "bollywood", "music"],
@@ -148,10 +159,8 @@ def categorize_article(article):
         "Crime": ["murder", "arrest", "police", "scam", "fraud", "theft", "investigation", "crime"],
         "International": ["global", "world", "foreign", "united nations", "international", "country", "overseas"]
     }
-
     scores = {cat: sum(word in text for word in words) for cat, words in categories.items()}
     best_category = max(scores, key=scores.get)
-
     return best_category
 
 # ---------------- News Functions ----------------
@@ -182,9 +191,9 @@ def fetch_and_store_news(lang="en", pages=2):
                 description = a.get("description", "") or ""
                 if len(description) > 150:
                     description = description[:150].rstrip() + "..."
-                    
+
                 category = categorize_article(a)
-                
+
                 doc = {
                     "title": a.get("title", ""),
                     "description": description,
@@ -193,10 +202,10 @@ def fetch_and_store_news(lang="en", pages=2):
                     "publishedAt": a.get("pubDate", ""),
                     "language": lang,
                     "source": "NewsData.io",
+                    "category": category,  # ✅ store category!
                     "createdAt": datetime.utcnow()
                 }
 
-                # ✅ Upsert to avoid duplicates
                 result = news_collection.update_one(
                     {"url": link},
                     {"$setOnInsert": doc},
@@ -226,34 +235,30 @@ def cleanup_old_news():
     return result.deleted_count
 
 # ---------------- News Routes ----------------
-@news_router.get("/")
+@news_router.get("/", response_model=List[NewsItem])
 def get_news(language: str = "en", limit: int = 20):
     news = list(news_collection.find({"language": language}).sort("createdAt", -1).limit(limit))
     for n in news:
         n["_id"] = str(n["_id"])
-    return {"articles": news}
+    return news
 
-@news_router.get("/all")
+@news_router.get("/all", response_model=List[NewsItem])
 def get_all_news():
     news = list(news_collection.find().sort("createdAt", -1))
     for n in news:
         n["_id"] = str(n["_id"])
-    return {"count": len(news), "articles": news}
+    return news
 
-@news_router.get("/category/{category_name}")
+@news_router.get("/category/{category_name}", response_model=List[NewsItem])
 def get_news_by_category(category_name: str, language: str = "en", limit: int = 20):
-    valid_categories = ["Sports", "Entertainment", "Food", "Crime", "International"]
-    if category_name.capitalize() not in valid_categories:
-        raise HTTPException(status_code=400, detail="Invalid category")
-
+    # case-insensitive search
     news = list(news_collection.find({
         "language": language,
-        "category": category_name.capitalize()
+        "category": {"$regex": f"^{category_name}$", "$options": "i"}
     }).sort("createdAt", -1).limit(limit))
-
     for n in news:
         n["_id"] = str(n["_id"])
-    return {"count": len(news), "category": category_name, "articles": news}
+    return news
 
 @news_router.get("/refresh")
 def refresh_news(secret: str = Query(...)):
