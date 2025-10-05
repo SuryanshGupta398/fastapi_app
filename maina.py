@@ -137,6 +137,23 @@ async def delete_user(email: str):
         raise HTTPException(status_code=404, detail="User not found")
     return {"status": "success", "message": "Account deleted"}
 
+# ---------------- Categorization Helper ----------------
+def categorize_article(article):
+    text = (article.get("title", "") + " " + article.get("description", "")).lower()
+
+    categories = {
+        "Sports": ["match", "cricket", "football", "tournament", "goal", "team", "player", "score"],
+        "Entertainment": ["movie", "film", "actor", "actress", "song", "celebrity", "show", "bollywood", "music"],
+        "Food": ["dish", "recipe", "restaurant", "cook", "chef", "food", "taste", "meal"],
+        "Crime": ["murder", "arrest", "police", "scam", "fraud", "theft", "investigation", "crime"],
+        "International": ["global", "world", "foreign", "united nations", "international", "country", "overseas"]
+    }
+
+    scores = {cat: sum(word in text for word in words) for cat, words in categories.items()}
+    best_category = max(scores, key=scores.get)
+
+    return best_category
+
 # ---------------- News Functions ----------------
 def fetch_and_store_news(lang="en", pages=2):
     if not NEWSDATA_API_KEY:
@@ -165,7 +182,9 @@ def fetch_and_store_news(lang="en", pages=2):
                 description = a.get("description", "") or ""
                 if len(description) > 150:
                     description = description[:150].rstrip() + "..."
-
+                    
+                category = categorize_article(a)
+                
                 doc = {
                     "title": a.get("title", ""),
                     "description": description,
@@ -220,6 +239,21 @@ def get_all_news():
     for n in news:
         n["_id"] = str(n["_id"])
     return {"count": len(news), "articles": news}
+
+@news_router.get("/category/{category_name}")
+def get_news_by_category(category_name: str, language: str = "en", limit: int = 20):
+    valid_categories = ["Sports", "Entertainment", "Food", "Crime", "International"]
+    if category_name.capitalize() not in valid_categories:
+        raise HTTPException(status_code=400, detail="Invalid category")
+
+    news = list(news_collection.find({
+        "language": language,
+        "category": category_name.capitalize()
+    }).sort("createdAt", -1).limit(limit))
+
+    for n in news:
+        n["_id"] = str(n["_id"])
+    return {"count": len(news), "category": category_name, "articles": news}
 
 @news_router.get("/refresh")
 def refresh_news(secret: str = Query(...)):
