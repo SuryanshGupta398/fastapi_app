@@ -30,7 +30,7 @@ CRON_SECRET = os.getenv("CRON_SECRET")
 # ---------------- Load ML model ----------------
 MODEL_PATH = "full_news_model.pkl"
 VECTORIZER_PATH = "full_tfidf_vectorizer.pkl"
-ENCODER_PATH = "label_encoder.pkl"
+ENCODER_PATH = "label_encoder1.pkl"
 
 model = joblib.load(MODEL_PATH)
 vectorizer = joblib.load(VECTORIZER_PATH)
