@@ -1,0 +1,19 @@
+import joblib
+from sklearn.preprocessing import LabelEncoder
+
+categories = [
+    "Sports",
+    "Business",
+    "Crime",
+    "Entertainment",
+    "Science",
+    "Food",
+    "Other"
+]
+
+encoder = LabelEncoder()
+encoder.fit(categories)
+
+joblib.dump(encoder, "label_encoder.pkl")
+
+print("✅ label_encoder.pkl created successfully!")
