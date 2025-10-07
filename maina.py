@@ -28,8 +28,8 @@ NEWSDATA_API_KEY = os.getenv("NEWSDATA_API_KEY")
 CRON_SECRET = os.getenv("CRON_SECRET")
 
 # ---------------- Load ML model ----------------
-MODEL_PATH = "news_model.pkl"
-VECTORIZER_PATH = "vectorizer.pkl"
+MODEL_PATH = "full_news_model.pkl"
+VECTORIZER_PATH = "full_tfidf_vectorizer.pkl"
 ENCODER_PATH = "label_encoder.pkl"
 
 model = joblib.load(MODEL_PATH)
