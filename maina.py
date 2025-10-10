@@ -107,7 +107,7 @@ async def signin_user(login_user: LoginUser):
     }
 
 # ---------------- News Fetch & Train ----------------
-def fetch_and_store_news(lang="en", pages=1):
+def fetch_and_store_news(lang="en", pages=2):
     if not NEWSDATA_API_KEY:
         print("❌ No API key found for NewsData.io")
         return
@@ -224,10 +224,25 @@ def get_news_by_category(
 def refresh_news(secret: str = Query(...)):
     if secret != CRON_SECRET:
         raise HTTPException(status_code=401, detail="Unauthorized")
+    
     fetch_and_store_news("en")
     fetch_and_store_news("hi")
     cleanup_old_news()
-    return {"status": "success", "message": "News fetched & model improved"}
+
+    # Calculate accuracy after refresh
+    news_docs = list(news_collection.find())
+    X_test = [doc["title"] for doc in news_docs]
+    y_true_str = [doc["category"] for doc in news_docs]
+    X_vec = vectorizer.transform(X_test)
+    y_true_int = label_encoder.transform(y_true_str)
+    y_pred_int = model.predict(X_vec)
+    accuracy = round(accuracy_score(y_true_int, y_pred_int) * 100, 2)
+
+    return {
+        "status": "success",
+        "message": "News fetched & model improved",
+        "accuracy": accuracy
+    }
 
 # ---------------- Register Routers ----------------
 app.include_router(user_router)
