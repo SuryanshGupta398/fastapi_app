@@ -137,7 +137,12 @@ def fetch_and_store_news(lang="en", pages=1):
             # Predict category using current model
             X_vec = vectorizer.transform([title])
             y_pred = model.predict(X_vec)
-            category = label_encoder.inverse_transform(y_pred)[0]
+            try:
+                category = label_encoder.inverse_transform(y_pred)[0]
+            except ValueError:
+                print("⚠️ Unseen label predicted:", y_pred)
+                category = "Other"
+
 
             # Save news in DB
             doc = {
