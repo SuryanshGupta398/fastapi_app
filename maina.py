@@ -188,6 +188,13 @@ def get_news(language: str = "en", limit: int = 20):
         n["_id"] = str(n["_id"])
     return {"articles": news}
 
+@news_router.get("/all")
+def get_all_news():
+    news = list(news_collection.find().sort("createdAt", -1))
+    for n in news:
+        n["_id"] = str(n["_id"])
+    return {"count": len(news), "articles": news}
+    
 @news_router.get("/refresh")
 def refresh_news(secret: str = Query(...)):
     if secret != CRON_SECRET:
