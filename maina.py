@@ -9,6 +9,7 @@ from passlib.context import CryptContext
 from fastapi.concurrency import run_in_threadpool
 from sklearn.linear_model import SGDClassifier
 from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics import accuracy_score
 
 # ---------------- Local imports ----------------
 from configuration import collection, news_collection
@@ -39,8 +40,23 @@ print("✅ ML Model, Vectorizer & Encoder loaded successfully!")
 
 # ---------------- Classes ----------------
 ALL_CLASSES = ['Business', 'Crime', 'Entertainment', 'Food', 'Science', 'Sports', 'International', 'Other']
-# Ensure label encoder is synced with ALL_CLASSES
 label_encoder.fit(ALL_CLASSES)
+
+# ---------------- Keyword overrides ----------------
+CATEGORY_KEYWORDS = {
+    "Business": ["company", "startup", "brand", "market", "investment", "IPO", "business", "deal", "corporate", "firm"],
+    "Sports": ["match", "tournament", "football", "cricket", "goal", "player", "league", "score"],
+    "Entertainment": ["movie", "film", "celebrity", "song", "album", "show", "series", "tv"],
+    "Food": ["restaurant", "recipe", "dish", "cuisine", "menu", "food", "chef"]
+}
+
+def categorize_with_keywords(text: str, predicted: str) -> str:
+    text_lower = text.lower()
+    for cat, keywords in CATEGORY_KEYWORDS.items():
+        for kw in keywords:
+            if kw in text_lower:
+                return cat
+    return predicted
 
 # ---------------- Request Models ----------------
 class ForgotPasswordRequest(BaseModel):
@@ -107,7 +123,7 @@ async def signin_user(login_user: LoginUser):
     }
 
 # ---------------- News Fetch & Train ----------------
-def fetch_and_store_news(lang="en", pages=2):
+def fetch_and_store_news(lang="en", pages=1):
     if not NEWSDATA_API_KEY:
         print("❌ No API key found for NewsData.io")
         return
@@ -138,16 +154,17 @@ def fetch_and_store_news(lang="en", pages=2):
             if len(desc) > 150:
                 desc = desc[:150].rstrip() + "..."
 
-            # Predict category using current model
+            # ML prediction
             X_vec = vectorizer.transform([title])
             y_pred = model.predict(X_vec)
             try:
                 category = label_encoder.inverse_transform(y_pred)[0]
             except ValueError:
-                print("⚠️ Unseen label predicted:", y_pred)
                 category = "Other"
 
-            # Save news in DB
+            # Keyword override
+            category = categorize_with_keywords(title, category)
+
             doc = {
                 "title": title,
                 "description": desc,
@@ -175,10 +192,10 @@ def fetch_and_store_news(lang="en", pages=2):
 
     print(f"[{lang}] ✅ Inserted {inserted_total} new articles")
 
-    # Incrementally train the model
+    # Incremental training
     if X_new:
         X_vec_new = vectorizer.transform(X_new)
-        y_new_int = label_encoder.transform(y_new_str)  # convert strings to integers
+        y_new_int = label_encoder.transform(y_new_str)
         all_classes_int = np.arange(len(label_encoder.classes_))
         model.partial_fit(X_vec_new, y_new_int, classes=all_classes_int)
         joblib.dump(model, MODEL_PATH)
@@ -204,22 +221,6 @@ def get_all_news():
         n["_id"] = str(n["_id"])
     return {"count": len(news), "articles": news}
 
-@news_router.get("/category/{category}")
-def get_news_by_category(
-    category: str,
-    language: str = "en",
-    limit: int = 50
-):
-    # Filter news by category and language
-    news = list(
-        news_collection.find({"category": category, "language": language})
-        .sort("createdAt", -1)
-        .limit(limit)
-    )
-    for n in news:
-        n["_id"] = str(n["_id"])
-    return {"count": len(news), "articles": news}
-
 @news_router.get("/refresh")
 def refresh_news(secret: str = Query(...)):
     if secret != CRON_SECRET:
@@ -229,14 +230,17 @@ def refresh_news(secret: str = Query(...)):
     fetch_and_store_news("hi")
     cleanup_old_news()
 
-    # Calculate accuracy after refresh
-    news_docs = list(news_collection.find())
-    X_test = [doc["title"] for doc in news_docs]
-    y_true_str = [doc.get("category", "Other") for doc in news_docs]
-    X_vec = vectorizer.transform(X_test)
-    y_true_int = label_encoder.transform(y_true_str)
-    y_pred_int = model.predict(X_vec)
-    accuracy = round(accuracy_score(y_true_int, y_pred_int) * 100, 2)
+    # Calculate accuracy
+    news_docs = list(news_collection.find({"category": {"$exists": True}}))
+    if news_docs:
+        X_test = [doc["title"] for doc in news_docs]
+        y_true_str = [doc["category"] for doc in news_docs]
+        X_vec = vectorizer.transform(X_test)
+        y_true_int = label_encoder.transform(y_true_str)
+        y_pred_int = model.predict(X_vec)
+        accuracy = round(accuracy_score(y_true_int, y_pred_int) * 100, 2)
+    else:
+        accuracy = 0.0
 
     return {
         "status": "success",
