@@ -38,6 +38,20 @@ label_encoder = joblib.load(ENCODER_PATH)
 
 print("✅ ML Model, Vectorizer & Encoder loaded successfully!")
 
+ALL_CLASSES = [
+    'Business',
+    'Crime',
+    'Entertainment',
+    'Food',
+    'Science',
+    'Sports',
+    'International',
+    'Other'
+]
+
+# Make sure label encoder is synced
+label_encoder.fit(ALL_CLASSES)
+
 # ---------------- Request Models ----------------
 class ForgotPasswordRequest(BaseModel):
     email: EmailStr
@@ -143,7 +157,6 @@ def fetch_and_store_news(lang="en", pages=1):
                 print("⚠️ Unseen label predicted:", y_pred)
                 category = "Other"
 
-
             # Save news in DB
             doc = {
                 "title": title,
@@ -176,8 +189,8 @@ def fetch_and_store_news(lang="en", pages=1):
     # Incrementally train the model with new data
     if X_new:
         X_vec_new = vectorizer.transform(X_new)
-        all_classes = label_encoder.classes_
-        model.partial_fit(X_vec_new, np.array(y_new), classes=all_classes)
+        # Use fixed class list to prevent partial_fit errors
+        model.partial_fit(X_vec_new, np.array(y_new), classes=ALL_CLASSES)
         joblib.dump(model, MODEL_PATH)
         print(f"🤖 Model improved with {len(X_new)} new samples!")
 
