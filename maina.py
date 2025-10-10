@@ -1,5 +1,4 @@
 import os
-import random
 import requests
 from datetime import datetime, timedelta
 import joblib
@@ -38,18 +37,9 @@ label_encoder = joblib.load(ENCODER_PATH)
 
 print("✅ ML Model, Vectorizer & Encoder loaded successfully!")
 
-ALL_CLASSES = [
-    'Business',
-    'Crime',
-    'Entertainment',
-    'Food',
-    'Science',
-    'Sports',
-    'International',
-    'Other'
-]
-
-# Make sure label encoder is synced
+# ---------------- Classes ----------------
+ALL_CLASSES = ['Business', 'Crime', 'Entertainment', 'Food', 'Science', 'Sports', 'International', 'Other']
+# Ensure label encoder is synced with ALL_CLASSES
 label_encoder.fit(ALL_CLASSES)
 
 # ---------------- Request Models ----------------
@@ -125,7 +115,7 @@ def fetch_and_store_news(lang="en", pages=1):
     url = f"https://newsdata.io/api/1/news?apikey={NEWSDATA_API_KEY}&country=in&language={lang}"
     page_count = 0
     inserted_total = 0
-    X_new, y_new = [], []
+    X_new, y_new_str = [], []
 
     while url and page_count < pages:
         response = requests.get(url, timeout=10)
@@ -173,9 +163,8 @@ def fetch_and_store_news(lang="en", pages=1):
             result = news_collection.update_one({"url": link}, {"$setOnInsert": doc}, upsert=True)
             if result.upserted_id:
                 inserted_total += 1
-                # Add to incremental dataset
                 X_new.append(title)
-                y_new.append(y_pred[0])
+                y_new_str.append(category)
 
         next_page = data.get("nextPage")
         if next_page:
@@ -186,11 +175,12 @@ def fetch_and_store_news(lang="en", pages=1):
 
     print(f"[{lang}] ✅ Inserted {inserted_total} new articles")
 
-    # Incrementally train the model with new data
+    # Incrementally train the model
     if X_new:
         X_vec_new = vectorizer.transform(X_new)
-        # Use fixed class list to prevent partial_fit errors
-        model.partial_fit(X_vec_new, np.array(y_new), classes=ALL_CLASSES)
+        y_new_int = label_encoder.transform(y_new_str)  # convert strings to integers
+        all_classes_int = np.arange(len(label_encoder.classes_))
+        model.partial_fit(X_vec_new, y_new_int, classes=all_classes_int)
         joblib.dump(model, MODEL_PATH)
         print(f"🤖 Model improved with {len(X_new)} new samples!")
 
