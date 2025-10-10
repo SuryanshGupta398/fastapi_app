@@ -214,6 +214,21 @@ def get_news(language: str = "en", limit: int = 20):
         n["_id"] = str(n["_id"])
     return {"articles": news}
 
+@news_router.get("/category/{category}")
+def get_news_by_category(category: str, language: str = "en", limit: int = 50):
+    """
+    Fetch news by category using a path parameter.
+    Example: /news/category/Sports?language=en&limit=50
+    """
+    news = list(
+        news_collection.find({"category": category, "language": language})
+        .sort("createdAt", -1)
+        .limit(limit)
+    )
+    for n in news:
+        n["_id"] = str(n["_id"])
+    return {"count": len(news), "articles": news}
+
 @news_router.get("/all")
 def get_all_news():
     news = list(news_collection.find().sort("createdAt", -1))
