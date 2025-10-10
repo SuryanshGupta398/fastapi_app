@@ -176,7 +176,8 @@ def fetch_and_store_news(lang="en", pages=1):
     # Incrementally train the model with new data
     if X_new:
         X_vec_new = vectorizer.transform(X_new)
-        model.partial_fit(X_vec_new, np.array(y_new), classes=np.unique(y_new))
+        all_classes = label_encoder.classes_
+        model.partial_fit(X_vec_new, np.array(y_new), classes=all_classes)
         joblib.dump(model, MODEL_PATH)
         print(f"🤖 Model improved with {len(X_new)} new samples!")
 
