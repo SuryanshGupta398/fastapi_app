@@ -232,7 +232,7 @@ def refresh_news(secret: str = Query(...)):
     # Calculate accuracy after refresh
     news_docs = list(news_collection.find())
     X_test = [doc["title"] for doc in news_docs]
-    y_true_str = [doc["category"] for doc in news_docs]
+    y_true_str = [doc.get("category", "Other") for doc in news_docs]
     X_vec = vectorizer.transform(X_test)
     y_true_int = label_encoder.transform(y_true_str)
     y_pred_int = model.predict(X_vec)
