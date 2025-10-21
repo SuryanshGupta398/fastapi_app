@@ -123,7 +123,7 @@ async def signin_user(login_user: LoginUser):
     }
 
 # ---------------- News Fetch & Train ----------------
-def fetch_and_store_news(lang="en", pages=1):
+def fetch_and_store_news(lang="en", pages=2):
     if not NEWSDATA_API_KEY:
         print("❌ No API key found for NewsData.io")
         return
