@@ -243,7 +243,7 @@ def refresh_news(secret: str = Query(...)):
     
     fetch_and_store_news("en")
     fetch_and_store_news("hi")
-    cleanup_old_news()
+    
 
     # Calculate accuracy
     news_docs = list(news_collection.find({"category": {"$exists": True}}))
