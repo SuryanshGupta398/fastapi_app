@@ -253,27 +253,35 @@ def refresh_news(secret: str = Query(...)):
     return {"status": "success", "message": "News fetched & model improved", "accuracy": accuracy}
 
 # ---------------- Report Route ----------------
-@report_router.post("-misinformation")
+@report_router.post("/misinformation")
 async def report_misinformation(
     email: str = Form(...),
     link: str = Form(""),
     reason: str = Form(...),
-    file: UploadFile = File(None)
+    proof: UploadFile = File(None)
 ):
+    """
+    Handles misinformation reports with optional proof attachment.
+    Sends:
+      1️⃣ Email to admin
+      2️⃣ Thank-you email to reporter
+    """
+
     try:
         attachment_path = None
-        if file:
-            attachment_path = f"temp_{file.filename}"
+        if proof:
+            attachment_path = f"temp_{proof.filename}"
             with open(attachment_path, "wb") as f:
-                f.write(await file.read())
+                f.write(await proof.read())
 
-        subject_admin = "🚨 New Misinformation Report Received"
+        # 1️⃣ Send email to admin
+        subject_admin = "🚨 New Misinformation Report"
         body_admin = f"""
-        <h2>New Report Submitted</h2>
+        <h2>New Misinformation Report</h2>
         <p><b>Reporter Email:</b> {email}</p>
         <p><b>News Link:</b> {link or 'No link provided'}</p>
         <p><b>Reason:</b> {reason}</p>
-        <p>🕓 Reported at: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC</p>
+        <p><i>🕓 Reported at: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC</i></p>
         """
 
         send_email(
@@ -283,24 +291,29 @@ async def report_misinformation(
             attachment_path=attachment_path
         )
 
-        subject_user = "✅ Thanks for reporting misinformation!"
-        body_user = """
+        # 2️⃣ Send thank-you email
+        subject_user = "✅ Thanks for Reporting Misinformation!"
+        body_user = f"""
         <h3>Hi there,</h3>
-        <p>Thank you for helping us maintain accuracy and integrity of news on our platform.</p>
-        <p>We’ll review your report and notify you if any updates are made.</p>
-        <br><p>— The Fake News Detector Team</p>
+        <p>Thank you for helping us fight misinformation!</p>
+        <p>We’ll review your report and take appropriate action.</p>
+        <br>
+        <p>— The Fake News Detector Team</p>
         """
 
-        send_email(to_email=email, subject=subject_user, body=body_user)
+        send_email(
+            to_email=email,
+            subject=subject_user,
+            body=body_user
+        )
 
         if attachment_path and os.path.exists(attachment_path):
             os.remove(attachment_path)
 
-        return {"status": "success", "message": "Report submitted and emails sent"}
+        return {"status": "success", "message": "Report submitted successfully"}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing report: {str(e)}")
-
 # ---------------- Register Routers ----------------
 app.include_router(user_router)
 app.include_router(news_router)
