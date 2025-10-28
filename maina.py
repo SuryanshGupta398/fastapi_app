@@ -253,7 +253,7 @@ def refresh_news(secret: str = Query(...)):
     return {"status": "success", "message": "News fetched & model improved", "accuracy": accuracy}
 
 # ---------------- Report Route ----------------
-@report_router.post("/misinformation")
+@report_router.post("report-misinformation")
 async def report_misinformation(
     email: str = Form(...),
     link: str = Form(""),
