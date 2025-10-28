@@ -3,7 +3,7 @@ import requests
 from datetime import datetime, timedelta
 import joblib
 import numpy as np
-from fastapi import FastAPI, APIRouter, HTTPException, BackgroundTasks, Query
+from fastapi import FastAPI, APIRouter, HTTPException, BackgroundTasks, Query, UploadFile, File, Form
 from pydantic import BaseModel, EmailStr
 from passlib.context import CryptContext
 from fastapi.concurrency import run_in_threadpool
@@ -20,6 +20,7 @@ from gmail_service import send_email
 app = FastAPI()
 user_router = APIRouter(prefix="/users", tags=["Users"])
 news_router = APIRouter(prefix="/news", tags=["News"])
+report_router = APIRouter(prefix="/report", tags=["Report"])
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -123,6 +124,9 @@ async def signin_user(login_user: LoginUser):
     }
 
 # ---------------- News Fetch & Train ----------------
+# 🧩 Create unique index to prevent duplicates
+news_collection.create_index("url", unique=True)
+
 def fetch_and_store_news(lang="en", pages=2):
     if not NEWSDATA_API_KEY:
         print("❌ No API key found for NewsData.io")
@@ -134,7 +138,7 @@ def fetch_and_store_news(lang="en", pages=2):
     X_new, y_new_str = [], []
 
     while url and page_count < pages:
-        response = requests.get(url, timeout=10)
+        response = requests.get(url, timeout=50)
         if response.status_code != 200:
             print(f"[{lang}] Failed: {response.status_code}")
             break
@@ -162,7 +166,6 @@ def fetch_and_store_news(lang="en", pages=2):
             except ValueError:
                 category = "Other"
 
-            # Keyword override
             category = categorize_with_keywords(title, category)
 
             doc = {
@@ -177,11 +180,15 @@ def fetch_and_store_news(lang="en", pages=2):
                 "createdAt": datetime.utcnow()
             }
 
-            result = news_collection.update_one({"url": link}, {"$setOnInsert": doc}, upsert=True)
-            if result.upserted_id:
+            # ✅ Prevent duplicates — safely insert
+            try:
+                news_collection.insert_one(doc)
                 inserted_total += 1
                 X_new.append(title)
                 y_new_str.append(category)
+            except Exception as e:
+                if "duplicate key" not in str(e).lower():
+                    print("⚠️ Insert error:", e)
 
         next_page = data.get("nextPage")
         if next_page:
@@ -190,7 +197,7 @@ def fetch_and_store_news(lang="en", pages=2):
         else:
             break
 
-    print(f"[{lang}] ✅ Inserted {inserted_total} new articles")
+    print(f"[{lang}] ✅ Inserted {inserted_total} new unique articles")
 
     # Incremental training
     if X_new:
@@ -201,10 +208,6 @@ def fetch_and_store_news(lang="en", pages=2):
         joblib.dump(model, MODEL_PATH)
         print(f"🤖 Model improved with {len(X_new)} new samples!")
 
-def cleanup_old_news():
-    one_week_ago = datetime.utcnow() - timedelta(days=7)
-    result = news_collection.delete_many({"createdAt": {"$lt": one_week_ago}})
-    print(f"🧹 Deleted {result.deleted_count} old news articles")
 
 # ---------------- News Routes ----------------
 @news_router.get("/")
@@ -216,15 +219,7 @@ def get_news(language: str = "en", limit: int = 20):
 
 @news_router.get("/category/{category}")
 def get_news_by_category(category: str, language: str = "en", limit: int = 50):
-    """
-    Fetch news by category using a path parameter.
-    Example: /news/category/Sports?language=en&limit=50
-    """
-    news = list(
-        news_collection.find({"category": category, "language": language})
-        .sort("createdAt", -1)
-        .limit(limit)
-    )
+    news = list(news_collection.find({"category": category, "language": language}).sort("createdAt", -1).limit(limit))
     for n in news:
         n["_id"] = str(n["_id"])
     return {"count": len(news), "articles": news}
@@ -243,9 +238,7 @@ def refresh_news(secret: str = Query(...)):
     
     fetch_and_store_news("en")
     fetch_and_store_news("hi")
-    
 
-    # Calculate accuracy
     news_docs = list(news_collection.find({"category": {"$exists": True}}))
     if news_docs:
         X_test = [doc["title"] for doc in news_docs]
@@ -257,12 +250,58 @@ def refresh_news(secret: str = Query(...)):
     else:
         accuracy = 0.0
 
-    return {
-        "status": "success",
-        "message": "News fetched & model improved",
-        "accuracy": accuracy
-    }
+    return {"status": "success", "message": "News fetched & model improved", "accuracy": accuracy}
+
+# ---------------- Report Route ----------------
+@report_router.post("/misinformation")
+async def report_misinformation(
+    email: str = Form(...),
+    link: str = Form(""),
+    reason: str = Form(...),
+    file: UploadFile = File(None)
+):
+    try:
+        attachment_path = None
+        if file:
+            attachment_path = f"temp_{file.filename}"
+            with open(attachment_path, "wb") as f:
+                f.write(await file.read())
+
+        subject_admin = "🚨 New Misinformation Report Received"
+        body_admin = f"""
+        <h2>New Report Submitted</h2>
+        <p><b>Reporter Email:</b> {email}</p>
+        <p><b>News Link:</b> {link or 'No link provided'}</p>
+        <p><b>Reason:</b> {reason}</p>
+        <p>🕓 Reported at: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC</p>
+        """
+
+        send_email(
+            to_email=os.getenv("MAIL_USERNAME"),
+            subject=subject_admin,
+            body=body_admin,
+            attachment_path=attachment_path
+        )
+
+        subject_user = "✅ Thanks for reporting misinformation!"
+        body_user = """
+        <h3>Hi there,</h3>
+        <p>Thank you for helping us maintain accuracy and integrity of news on our platform.</p>
+        <p>We’ll review your report and notify you if any updates are made.</p>
+        <br><p>— The Fake News Detector Team</p>
+        """
+
+        send_email(to_email=email, subject=subject_user, body=body_user)
+
+        if attachment_path and os.path.exists(attachment_path):
+            os.remove(attachment_path)
+
+        return {"status": "success", "message": "Report submitted and emails sent"}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing report: {str(e)}")
 
 # ---------------- Register Routers ----------------
 app.include_router(user_router)
 app.include_router(news_router)
+app.include_router(report_router)
