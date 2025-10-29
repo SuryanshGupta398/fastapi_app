@@ -1,6 +1,7 @@
 import os
 import requests
 from datetime import datetime, timedelta
+import random
 import joblib
 import numpy as np
 from fastapi import FastAPI, APIRouter, HTTPException, BackgroundTasks, Query, UploadFile, File, Form
@@ -88,6 +89,9 @@ async def send_otp_email(email: str, otp: str):
     body = f"<h2>Password Reset</h2><p>Your OTP is: <b>{otp}</b></p><p>Valid for 5 minutes.</p>"
     await run_in_threadpool(send_email, email, subject, body)
 
+# ---------------- OTP Storage ----------------
+otp_store = {}
+
 # ---------------- User Routes ----------------
 @user_router.post("/register")
 async def register_user(new_user: User, background_tasks: BackgroundTasks):
@@ -123,8 +127,47 @@ async def signin_user(login_user: LoginUser):
         }
     }
 
+# ---------------- Forgot Password ----------------
+@user_router.post("/forgot-password")
+async def forgot_password(request: ForgotPasswordRequest, background_tasks: BackgroundTasks):
+    user = collection.find_one({"email": request.email.lower()})
+    if not user:
+        raise HTTPException(status_code=404, detail="Email not registered")
+
+    otp = str(random.randint(100000, 999999))
+    otp_store[request.email.lower()] = {"otp": otp, "expires": datetime.utcnow() + timedelta(minutes=5)}
+
+    background_tasks.add_task(send_otp_email, request.email, otp)
+    return {"status": "success", "message": "OTP sent successfully to your email"}
+
+# ---------------- Reset Password ----------------
+@user_router.post("/reset-password")
+async def reset_password(request: ResetPasswordRequest):
+    record = otp_store.get(request.email.lower())
+    if not record or record["otp"] != request.otp:
+        raise HTTPException(status_code=400, detail="Invalid OTP")
+    if datetime.utcnow() > record["expires"]:
+        raise HTTPException(status_code=400, detail="OTP expired")
+
+    hashed_pwd = pwd_context.hash(request.new_password)
+    result = collection.update_one({"email": request.email.lower()}, {"$set": {"password": hashed_pwd}})
+    if result.modified_count == 0:
+        raise HTTPException(status_code=400, detail="Password update failed")
+
+    del otp_store[request.email.lower()]
+    return {"status": "success", "message": "Password reset successful"}
+
+# ---------------- Delete Account ----------------
+@user_router.delete("/delete-account")
+async def delete_account(email: EmailStr, password: str):
+    user = collection.find_one({"email": email.lower()})
+    if not user or not pwd_context.verify(password, user["password"]):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    collection.delete_one({"email": email.lower()})
+    return {"status": "success", "message": "Account deleted successfully"}
+
 # ---------------- News Fetch & Train ----------------
-# 🧩 Create unique index to prevent duplicates
 news_collection.create_index("url", unique=True)
 
 def fetch_and_store_news(lang="en", pages=2):
@@ -158,7 +201,6 @@ def fetch_and_store_news(lang="en", pages=2):
             if len(desc) > 150:
                 desc = desc[:150].rstrip() + "..."
 
-            # ML prediction
             X_vec = vectorizer.transform([title])
             y_pred = model.predict(X_vec)
             try:
@@ -180,7 +222,6 @@ def fetch_and_store_news(lang="en", pages=2):
                 "createdAt": datetime.utcnow()
             }
 
-            # ✅ Prevent duplicates — safely insert
             try:
                 news_collection.insert_one(doc)
                 inserted_total += 1
@@ -199,7 +240,6 @@ def fetch_and_store_news(lang="en", pages=2):
 
     print(f"[{lang}] ✅ Inserted {inserted_total} new unique articles")
 
-    # Incremental training
     if X_new:
         X_vec_new = vectorizer.transform(X_new)
         y_new_int = label_encoder.transform(y_new_str)
@@ -207,7 +247,6 @@ def fetch_and_store_news(lang="en", pages=2):
         model.partial_fit(X_vec_new, y_new_int, classes=all_classes_int)
         joblib.dump(model, MODEL_PATH)
         print(f"🤖 Model improved with {len(X_new)} new samples!")
-
 
 # ---------------- News Routes ----------------
 @news_router.get("/")
@@ -235,7 +274,7 @@ def get_all_news():
 def refresh_news(secret: str = Query(...)):
     if secret != CRON_SECRET:
         raise HTTPException(status_code=401, detail="Unauthorized")
-    
+
     fetch_and_store_news("en")
     fetch_and_store_news("hi")
 
@@ -260,13 +299,6 @@ async def report_misinformation(
     reason: str = Form(...),
     proof: UploadFile = File(None)
 ):
-    """
-    Handles misinformation reports with optional proof attachment.
-    Sends:
-      1️⃣ Email to admin
-      2️⃣ Thank-you email to reporter
-    """
-
     try:
         attachment_path = None
         if proof:
@@ -274,7 +306,6 @@ async def report_misinformation(
             with open(attachment_path, "wb") as f:
                 f.write(await proof.read())
 
-        # 1️⃣ Send email to admin
         subject_admin = "🚨 New Misinformation Report"
         body_admin = f"""
         <h2>New Misinformation Report</h2>
@@ -291,7 +322,6 @@ async def report_misinformation(
             attachment_path=attachment_path
         )
 
-        # 2️⃣ Send thank-you email
         subject_user = "✅ Thanks for Reporting Misinformation!"
         body_user = f"""
         <h3>Hi there,</h3>
@@ -314,6 +344,7 @@ async def report_misinformation(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing report: {str(e)}")
+
 # ---------------- Register Routers ----------------
 app.include_router(user_router)
 app.include_router(news_router)
