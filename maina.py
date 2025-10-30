@@ -291,6 +291,53 @@ def refresh_news(secret: str = Query(...)):
 
     return {"status": "success", "message": "News fetched & model improved", "accuracy": accuracy}
 
+# ---------------- Trending News Smart Ranking ----------------
+TRENDING_KEYWORDS = ["breaking", "exclusive", "update", "live", "urgent", "just in", "latest", "alert"]
+
+@news_router.get("/trending-smart")
+def get_smart_trending_news(limit: int = 20):
+    """
+    Get smart trending news based on views, recency, and keywords.
+    """
+    try:
+        now = datetime.utcnow()
+        last_48h = now - timedelta(hours=48)
+
+        # Fetch recent news (last 2 days)
+        recent_news = list(
+            news_collection.find({
+                "createdAt": {"$gte": last_48h}
+            }).limit(100)
+        )
+
+        trending = []
+        for n in recent_news:
+            views = n.get("views", 0)
+            title = n.get("title", "").lower()
+            created_at = n.get("createdAt", now)
+            hours_old = (now - created_at).total_seconds() / 3600
+
+            # --- Calculate score ---
+            recency_boost = max(0, int(20 - hours_old))  # decay after 20 hours
+            keyword_boost = 15 if any(kw in title for kw in TRENDING_KEYWORDS) else 0
+            score = (views * 2) + keyword_boost + recency_boost
+
+            n["trending_score"] = score
+            n["_id"] = str(n["_id"])
+            trending.append(n)
+
+        # Sort by score descending
+        trending = sorted(trending, key=lambda x: x["trending_score"], reverse=True)[:limit]
+
+        return {
+            "status": "success",
+            "count": len(trending),
+            "articles": trending
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching smart trending news: {str(e)}")
+
 # ---------------- Report Route ----------------
 @report_router.post("/misinformation")
 async def report_misinformation(
