@@ -42,41 +42,6 @@ ALL_CLASSES = [
     'Sports', 'International', 'Other', 'Health', 'Politics'
 ]
 
-# ---------------- Train on Dataset (NEW PART) ----------------
-DATASET_PATH = "labeled_newscatcher_dataset.csv"
-if os.path.exists(DATASET_PATH):
-    print("📂 Loading dataset for Science + category training...")
-    df = pd.read_csv(DATASET_PATH,sep=";")
-    df = df.rename(columns={"title": "text", "topic": "category"})[["text","category"]]
-    df=df.dropna(subset=["text","category"])
-
-    # Filter to valid categories
-    df = df[df["category"].isin(ALL_CLASSES)]
-
-    vectorizer = TfidfVectorizer(max_features=5000)
-    X_vec = vectorizer.fit_transform(df["text"].astype(str))
-
-    label_encoder = LabelEncoder()
-    label_encoder.fit(ALL_CLASSES)
-    y_encoded = label_encoder.transform(df["category"].astype(str))
-
-    model = SGDClassifier(loss="log_loss", random_state=42, max_iter=1000)
-    model.fit(X_vec, y_encoded)
-
-    y_pred = model.predict(X_vec)
-    base_accuracy = round(accuracy_score(y_encoded, y_pred) * 100, 2)
-    print(f"✅ Base model trained from dataset. Accuracy: {base_accuracy}%")
-
-    joblib.dump(model, MODEL_PATH)
-    joblib.dump(vectorizer, VECTORIZER_PATH)
-    joblib.dump(label_encoder, ENCODER_PATH)
-else:
-    print("⚠️ Dataset not found — loading existing saved model instead.")
-    model = joblib.load(MODEL_PATH)
-    vectorizer = joblib.load(VECTORIZER_PATH)
-    label_encoder = joblib.load(ENCODER_PATH)
-    base_accuracy = 0.0
-
 print("✅ ML Model, Vectorizer & Encoder ready!")
 
 # ---------------- Keyword overrides ----------------
