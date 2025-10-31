@@ -1,5 +1,6 @@
 import os
 import requests
+import pandas as pd
 from datetime import datetime, timedelta
 import random
 import joblib
@@ -11,6 +12,7 @@ from fastapi.concurrency import run_in_threadpool
 from sklearn.linear_model import SGDClassifier
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics import accuracy_score
+from sklearn.preprocessing import LabelEncoder
 
 # ---------------- Local imports ----------------
 from configuration import collection, news_collection
@@ -29,20 +31,52 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 NEWSDATA_API_KEY = os.getenv("NEWSDATA_API_KEY")
 CRON_SECRET = os.getenv("CRON_SECRET")
 
-# ---------------- Load ML model ----------------
+# ---------------- ML model paths ----------------
 MODEL_PATH = "full_news_model.pkl"
 VECTORIZER_PATH = "full_tfidf_vectorizer.pkl"
 ENCODER_PATH = "label_encoder1.pkl"
 
-model = joblib.load(MODEL_PATH)
-vectorizer = joblib.load(VECTORIZER_PATH)
-label_encoder = joblib.load(ENCODER_PATH)
-
-print("✅ ML Model, Vectorizer & Encoder loaded successfully!")
-
 # ---------------- Classes ----------------
-ALL_CLASSES = ['Business', 'Crime', 'Entertainment', 'Food', 'Science', 'Sports', 'International', 'Other','Health','Politics']
-label_encoder.fit(ALL_CLASSES)
+ALL_CLASSES = [
+    'Business', 'Crime', 'Entertainment', 'Food', 'Science',
+    'Sports', 'International', 'Other', 'Health', 'Politics'
+]
+
+# ---------------- Train on Dataset (NEW PART) ----------------
+DATASET_PATH = "labeled_newscatcher_dataset.csv"
+if os.path.exists(DATASET_PATH):
+    print("📂 Loading dataset for Science + category training...")
+    df = pd.read_csv(DATASET_PATH)
+    df = df.dropna(subset=["title", "category"])
+
+    # Filter to valid categories
+    df = df[df["category"].isin(ALL_CLASSES)]
+
+    vectorizer = TfidfVectorizer(max_features=5000)
+    X_vec = vectorizer.fit_transform(df["title"].astype(str))
+
+    label_encoder = LabelEncoder()
+    label_encoder.fit(ALL_CLASSES)
+    y_encoded = label_encoder.transform(df["category"].astype(str))
+
+    model = SGDClassifier(loss="log_loss", random_state=42, max_iter=1000)
+    model.fit(X_vec, y_encoded)
+
+    y_pred = model.predict(X_vec)
+    base_accuracy = round(accuracy_score(y_encoded, y_pred) * 100, 2)
+    print(f"✅ Base model trained from dataset. Accuracy: {base_accuracy}%")
+
+    joblib.dump(model, MODEL_PATH)
+    joblib.dump(vectorizer, VECTORIZER_PATH)
+    joblib.dump(label_encoder, ENCODER_PATH)
+else:
+    print("⚠️ Dataset not found — loading existing saved model instead.")
+    model = joblib.load(MODEL_PATH)
+    vectorizer = joblib.load(VECTORIZER_PATH)
+    label_encoder = joblib.load(ENCODER_PATH)
+    base_accuracy = 0.0
+
+print("✅ ML Model, Vectorizer & Encoder ready!")
 
 # ---------------- Keyword overrides ----------------
 CATEGORY_KEYWORDS = {
@@ -53,7 +87,6 @@ CATEGORY_KEYWORDS = {
     "Science": ["research", "experiment", "discovery", "scientist"],
     "Health": ["disease", "medicine", "vaccine", "hospital", "covid", "health"],
     "Politics": ["election", "government", "minister", "policy", "vote"]
-    
 }
 
 def categorize_with_keywords(text: str, predicted: str) -> str:
@@ -64,6 +97,25 @@ def categorize_with_keywords(text: str, predicted: str) -> str:
                 return cat
     return predicted
 
+# ---------------- Accuracy Helper ----------------
+current_accuracy = base_accuracy
+
+def update_model_accuracy(X_new, y_new_str):
+    global current_accuracy
+    if not X_new:
+        return current_accuracy
+
+    X_vec_new = vectorizer.transform(X_new)
+    y_new_int = label_encoder.transform(y_new_str)
+    model.partial_fit(X_vec_new, y_new_int, classes=np.arange(len(label_encoder.classes_)))
+    joblib.dump(model, MODEL_PATH)
+
+    y_pred_new = model.predict(X_vec_new)
+    acc = round(accuracy_score(y_new_int, y_pred_new) * 100, 2)
+    current_accuracy = acc
+    print(f"📊 Model retrained. New accuracy: {acc}%")
+    return acc
+
 # ---------------- Request Models ----------------
 class ForgotPasswordRequest(BaseModel):
     email: EmailStr
@@ -73,10 +125,10 @@ class ResetPasswordRequest(BaseModel):
     otp: str
     new_password: str
 
-# ---------------- Health Routes ----------------
+# ---------------- Health Check ----------------
 @app.get("/health")
 def health_check():
-    return {"status": "ok", "time": datetime.utcnow().isoformat()}
+    return {"status": "ok", "time": datetime.utcnow().isoformat(), "model_accuracy": current_accuracy}
 
 @app.head("/health")
 def health_check_head():
@@ -93,7 +145,6 @@ async def send_otp_email(email: str, otp: str):
     body = f"<h2>Password Reset</h2><p>Your OTP is: <b>{otp}</b></p><p>Valid for 5 minutes.</p>"
     await run_in_threadpool(send_email, email, subject, body)
 
-# ---------------- OTP Storage ----------------
 otp_store = {}
 
 # ---------------- User Routes ----------------
@@ -120,7 +171,6 @@ async def signin_user(login_user: LoginUser):
     user_in_db = collection.find_one({"email": email})
     if not user_in_db or not pwd_context.verify(login_user.password, user_in_db["password"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
-
     return {
         "status": "success",
         "message": "Login successful",
@@ -131,20 +181,17 @@ async def signin_user(login_user: LoginUser):
         }
     }
 
-# ---------------- Forgot Password ----------------
+# ---------------- Forgot Password / Reset ----------------
 @user_router.post("/forgot-password")
 async def forgot_password(request: ForgotPasswordRequest, background_tasks: BackgroundTasks):
     user = collection.find_one({"email": request.email.lower()})
     if not user:
         raise HTTPException(status_code=404, detail="Email not registered")
-
     otp = str(random.randint(100000, 999999))
     otp_store[request.email.lower()] = {"otp": otp, "expires": datetime.utcnow() + timedelta(minutes=5)}
-
     background_tasks.add_task(send_otp_email, request.email, otp)
-    return {"status": "success", "message": "OTP sent successfully to your email"}
+    return {"status": "success", "message": "OTP sent successfully"}
 
-# ---------------- Reset Password ----------------
 @user_router.post("/reset-password")
 async def reset_password(request: ResetPasswordRequest):
     record = otp_store.get(request.email.lower())
@@ -157,7 +204,6 @@ async def reset_password(request: ResetPasswordRequest):
     result = collection.update_one({"email": request.email.lower()}, {"$set": {"password": hashed_pwd}})
     if result.modified_count == 0:
         raise HTTPException(status_code=400, detail="Password update failed")
-
     del otp_store[request.email.lower()]
     return {"status": "success", "message": "Password reset successful"}
 
@@ -166,8 +212,7 @@ async def reset_password(request: ResetPasswordRequest):
 async def delete_account(email: EmailStr, password: str):
     user = collection.find_one({"email": email.lower()})
     if not user or not pwd_context.verify(password, user["password"]):
-        raise HTTPException(status_code=401, detail="Invalid email or password")
-
+        raise HTTPException(status_code=401, detail="Invalid credentials")
     collection.delete_one({"email": email.lower()})
     return {"status": "success", "message": "Account deleted successfully"}
 
@@ -175,49 +220,28 @@ async def delete_account(email: EmailStr, password: str):
 news_collection.create_index("url", unique=True)
 
 def fetch_and_store_news(lang="en", pages=2):
-    if not NEWSDATA_API_KEY:
-        print("❌ No API key found for NewsData.io")
-        return
-
     url = f"https://newsdata.io/api/1/news?apikey={NEWSDATA_API_KEY}&country=in&language={lang}"
-    page_count = 0
-    inserted_total = 0
+    page_count, inserted_total = 0, 0
     X_new, y_new_str = [], []
 
     while url and page_count < pages:
-        response = requests.get(url, timeout=50)
-        if response.status_code != 200:
-            print(f"[{lang}] Failed: {response.status_code}")
+        resp = requests.get(url, timeout=50)
+        if resp.status_code != 200:
             break
-
-        data = response.json()
-        articles = data.get("results", [])
-        for a in articles:
-            link = a.get("link")
-            if not link:
-                continue
-
+        data = resp.json()
+        for a in data.get("results", []):
             title = a.get("title", "")
-            if not title.strip():
+            if not title:
                 continue
-
             desc = a.get("description", "") or ""
-            if len(desc) > 150:
-                desc = desc[:150].rstrip() + "..."
-
             X_vec = vectorizer.transform([title])
             y_pred = model.predict(X_vec)
-            try:
-                category = label_encoder.inverse_transform(y_pred)[0]
-            except ValueError:
-                category = "Other"
-
+            category = label_encoder.inverse_transform(y_pred)[0]
             category = categorize_with_keywords(title, category)
-
             doc = {
                 "title": title,
-                "description": desc,
-                "url": link,
+                "description": desc[:150],
+                "url": a.get("link", ""),
                 "image": a.get("image_url", ""),
                 "publishedAt": a.get("pubDate", ""),
                 "language": lang,
@@ -225,7 +249,6 @@ def fetch_and_store_news(lang="en", pages=2):
                 "category": category,
                 "createdAt": datetime.utcnow()
             }
-
             try:
                 news_collection.insert_one(doc)
                 inserted_total += 1
@@ -234,88 +257,38 @@ def fetch_and_store_news(lang="en", pages=2):
             except Exception as e:
                 if "duplicate key" not in str(e).lower():
                     print("⚠️ Insert error:", e)
-
         next_page = data.get("nextPage")
         if next_page:
             url = f"https://newsdata.io/api/1/news?apikey={NEWSDATA_API_KEY}&country=in&language={lang}&page={next_page}"
             page_count += 1
         else:
             break
+    print(f"[{lang}] ✅ Inserted {inserted_total} new articles")
+    return update_model_accuracy(X_new, y_new_str)
 
-    print(f"[{lang}] ✅ Inserted {inserted_total} new unique articles")
+# ---------------- Accuracy Route ----------------
+@app.get("/model/accuracy")
+def get_model_accuracy():
+    return {"current_model_accuracy": current_accuracy}
 
-    if X_new:
-        X_vec_new = vectorizer.transform(X_new)
-        y_new_int = label_encoder.transform(y_new_str)
-        all_classes_int = np.arange(len(label_encoder.classes_))
-        model.partial_fit(X_vec_new, y_new_int, classes=all_classes_int)
-        joblib.dump(model, MODEL_PATH)
-        print(f"🤖 Model improved with {len(X_new)} new samples!")
-        y_pred_int = model.predict(X_vec_new)
-        acc = round(accuracy_score(y_new_int, y_pred_int) * 100, 2)
-        accuracy = acc
-        print(f"📊 Updated Model Accuracy: {acc}%")
-
-# ---------------- News Routes ----------------
-@news_router.get("/")
-def get_news(language: str = "en", limit: int = 20):
-    news = list(news_collection.find({"language": language}).sort("createdAt", -1).limit(limit))
-    for n in news:
-        n["_id"] = str(n["_id"])
-    return {"articles": news}
-
-@news_router.get("/category/{category}")
-def get_news_by_category(category: str, language: str = "en", limit: int = 50):
-    news = list(news_collection.find({"category": category, "language": language}).sort("createdAt", -1).limit(limit))
-    for n in news:
-        n["_id"] = str(n["_id"])
-    return {"count": len(news), "articles": news}
-
-@news_router.get("/all")
-def get_all_news():
-    news = list(news_collection.find().sort("createdAt", -1))
-    for n in news:
-        n["_id"] = str(n["_id"])
-    return {"count": len(news), "articles": news}
-
-@news_router.get("/refresh")
-def refresh_news(secret: str = Query(...)):
-    if secret != CRON_SECRET:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
-    fetch_and_store_news("en")
-    fetch_and_store_news("hi")
-
-    news_docs = list(news_collection.find({"category": {"$exists": True}}))
-    if news_docs:
-        X_test = [doc["title"] for doc in news_docs]
-        y_true_str = [doc["category"] for doc in news_docs]
-        X_vec = vectorizer.transform(X_test)
-        y_true_int = label_encoder.transform(y_true_str)
-        y_pred_int = model.predict(X_vec)
-        accuracy = round(accuracy_score(y_true_int, y_pred_int) * 100, 2)
-    else:
-        accuracy = 0.0
-
-    return {"status": "success", "message": "News fetched & model improved", "accuracy": accuracy}
-
-# ---------------- Trending News Smart Ranking ----------------
-TRENDING_KEYWORDS = ["breaking", "exclusive", "update", "live", "urgent", "just in", "latest", "alert"]
+TRENDING_KEYWORDS = [
+    "breaking", "exclusive", "update", "live", "urgent", "just in", "latest", "alert"
+]
 
 @news_router.get("/trending-smart")
-def get_smart_trending_news(limit: int = 20):
+def get_smart_trending_news(limit: int = 100):
     """
-    Get smart trending news based on views, recency, and keywords.
+    Get smart trending news from the last 7 days based on views, recency, and keywords.
     """
     try:
         now = datetime.utcnow()
-        last_48h = now - timedelta(hours=48)
+        last_7_days = now - timedelta(days=7)  # ⏰ 7 days window
 
-        # Fetch recent news (last 2 days)
+        # Fetch news created in the last 7 days
         recent_news = list(
             news_collection.find({
-                "createdAt": {"$gte": last_48h}
-            }).limit(100)
+                "createdAt": {"$gte": last_7_days}
+            }).limit(300)
         )
 
         trending = []
@@ -325,16 +298,21 @@ def get_smart_trending_news(limit: int = 20):
             created_at = n.get("createdAt", now)
             hours_old = (now - created_at).total_seconds() / 3600
 
-            # --- Calculate score ---
-            recency_boost = max(0, int(20 - hours_old))  # decay after 20 hours
-            keyword_boost = 15 if any(kw in title for kw in TRENDING_KEYWORDS) else 0
-            score = (views * 2) + keyword_boost + recency_boost
+            # --- 🧠 Smart score calculation ---
+            # Recency decay: newer news gets higher score but stays valid up to 7 days
+            recency_boost = max(0, int(168 - hours_old)) // 8  # 168 = 7 days * 24 hours
+
+            # Keyword boost if trending-related words appear
+            keyword_boost = 20 if any(kw in title for kw in TRENDING_KEYWORDS) else 0
+
+            # Final score (balanced)
+            score = (views * 2.5) + keyword_boost + recency_boost
 
             n["trending_score"] = score
             n["_id"] = str(n["_id"])
             trending.append(n)
 
-        # Sort by score descending
+        # Sort by score (descending)
         trending = sorted(trending, key=lambda x: x["trending_score"], reverse=True)[:limit]
 
         return {
@@ -344,7 +322,10 @@ def get_smart_trending_news(limit: int = 20):
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching smart trending news: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error fetching smart trending news: {str(e)}"
+        )
 
 # ---------------- Report Route ----------------
 @report_router.post("/misinformation")
