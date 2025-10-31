@@ -46,7 +46,7 @@ ALL_CLASSES = [
 DATASET_PATH = "labeled_newscatcher_dataset.csv"
 if os.path.exists(DATASET_PATH):
     print("📂 Loading dataset for Science + category training...")
-    df = pd.read_csv(DATASET_PATH)
+    df = pd.read_csv(DATASET_PATH,sep=";")
     df = df.dropna(subset=["title", "category"])
 
     # Filter to valid categories
