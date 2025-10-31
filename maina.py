@@ -54,7 +54,7 @@ if os.path.exists(DATASET_PATH):
     df = df[df["category"].isin(ALL_CLASSES)]
 
     vectorizer = TfidfVectorizer(max_features=5000)
-    X_vec = vectorizer.fit_transform(df["title"].astype(str))
+    X_vec = vectorizer.fit_transform(df["text"].astype(str))
 
     label_encoder = LabelEncoder()
     label_encoder.fit(ALL_CLASSES)
