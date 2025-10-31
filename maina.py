@@ -41,7 +41,7 @@ label_encoder = joblib.load(ENCODER_PATH)
 print("✅ ML Model, Vectorizer & Encoder loaded successfully!")
 
 # ---------------- Classes ----------------
-ALL_CLASSES = ['Business', 'Crime', 'Entertainment', 'Food', 'Science', 'Sports', 'International', 'Other']
+ALL_CLASSES = ['Business', 'Crime', 'Entertainment', 'Food', 'Science', 'Sports', 'International', 'Other','Health','Politics']
 label_encoder.fit(ALL_CLASSES)
 
 # ---------------- Keyword overrides ----------------
@@ -49,7 +49,11 @@ CATEGORY_KEYWORDS = {
     "Business": ["company", "startup", "brand", "market", "investment", "IPO", "business", "deal", "corporate", "firm"],
     "Sports": ["match", "tournament", "football", "cricket", "goal", "player", "league", "score"],
     "Entertainment": ["movie", "film", "celebrity", "song", "album", "show", "series", "tv"],
-    "Food": ["restaurant", "recipe", "dish", "cuisine", "menu", "food", "chef"]
+    "Food": ["restaurant", "recipe", "dish", "cuisine", "menu", "food", "chef"],
+    "Science": ["research", "experiment", "discovery", "scientist"],
+    "Health": ["disease", "medicine", "vaccine", "hospital", "covid", "health"],
+    "Politics": ["election", "government", "minister", "policy", "vote"]
+    
 }
 
 def categorize_with_keywords(text: str, predicted: str) -> str:
@@ -247,6 +251,10 @@ def fetch_and_store_news(lang="en", pages=2):
         model.partial_fit(X_vec_new, y_new_int, classes=all_classes_int)
         joblib.dump(model, MODEL_PATH)
         print(f"🤖 Model improved with {len(X_new)} new samples!")
+        y_pred_int = model.predict(X_vec_new)
+        acc = round(accuracy_score(y_new_int, y_pred_int) * 100, 2)
+        accuracy = acc
+        print(f"📊 Updated Model Accuracy: {acc}%")
 
 # ---------------- News Routes ----------------
 @news_router.get("/")
