@@ -63,24 +63,6 @@ def categorize_with_keywords(text: str, predicted: str) -> str:
                 return cat
     return predicted
 
-# ---------------- Accuracy Helper ----------------
-current_accuracy = base_accuracy
-
-def update_model_accuracy(X_new, y_new_str):
-    global current_accuracy
-    if not X_new:
-        return current_accuracy
-
-    X_vec_new = vectorizer.transform(X_new)
-    y_new_int = label_encoder.transform(y_new_str)
-    model.partial_fit(X_vec_new, y_new_int, classes=np.arange(len(label_encoder.classes_)))
-    joblib.dump(model, MODEL_PATH)
-
-    y_pred_new = model.predict(X_vec_new)
-    acc = round(accuracy_score(y_new_int, y_pred_new) * 100, 2)
-    current_accuracy = acc
-    print(f"📊 Model retrained. New accuracy: {acc}%")
-    return acc
 
 # ---------------- Request Models ----------------
 class ForgotPasswordRequest(BaseModel):
@@ -230,12 +212,7 @@ def fetch_and_store_news(lang="en", pages=2):
         else:
             break
     print(f"[{lang}] ✅ Inserted {inserted_total} new articles")
-    return update_model_accuracy(X_new, y_new_str)
-
-# ---------------- Accuracy Route ----------------
-@app.get("/model/accuracy")
-def get_model_accuracy():
-    return {"current_model_accuracy": current_accuracy}
+    
 
 TRENDING_KEYWORDS = [
     "breaking", "exclusive", "update", "live", "urgent", "just in", "latest", "alert"
