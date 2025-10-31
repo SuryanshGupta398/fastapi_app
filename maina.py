@@ -338,6 +338,58 @@ def get_smart_trending_news(limit: int = 100):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching smart trending news: {str(e)}")
 
+# ---------------- Verify News Route (Google Fact Check API) ----------------
+@news_router.post("/verify-news")
+async def verify_news(headline: str = Form(...)):
+    """
+    Verify a news headline using Google Fact Check Tools API.
+    """
+    try:
+        GOOGLE_KEY = os.getenv("GOOGLE_FACTCHECK_KEY")
+        if not GOOGLE_KEY:
+            raise HTTPException(status_code=500, detail="Google Fact Check API key not configured.")
+
+        url = f"https://factchecktools.googleapis.com/v1alpha1/claims:search?query={headline}&key={GOOGLE_KEY}"
+        response = requests.get(url, timeout=30)
+        if response.status_code != 200:
+            raise HTTPException(status_code=500, detail=f"Google API error: {response.text}")
+
+        data = response.json()
+        claims = data.get("claims", [])
+        if not claims:
+            return {
+                "status": "not_found",
+                "headline": headline,
+                "verified": False,
+                "confidence": 0.4,
+                "rating": "No matching fact-check found",
+                "credible_source": None,
+                "link": None,
+                "message": "No verification data available for this news."
+            }
+
+        # Take the top claim
+        claim = claims[0]
+        review = claim.get("claimReview", [{}])[0]
+        rating = review.get("textualRating", "Unknown")
+        publisher = review.get("publisher", {}).get("name", "Unknown Source")
+        url = review.get("url", "")
+        confidence = 0.9 if rating.lower() in ["true", "mostly true"] else 0.6 if rating.lower() in ["mixed", "partly true"] else 0.3
+
+        return {
+            "status": "success",
+            "headline": headline,
+            "verified": True if rating.lower() in ["true", "mostly true"] else False,
+            "confidence": confidence,
+            "rating": rating,
+            "credible_source": publisher,
+            "link": url,
+            "message": f"This news is rated '{rating}' by {publisher}.",
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error verifying news: {str(e)}")
+
 # ---------------- Report Route ----------------
 @report_router.post("/misinformation")
 async def report_misinformation(
