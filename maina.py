@@ -64,6 +64,47 @@ def categorize_with_keywords(text: str, predicted: str) -> str:
     return predicted
 
 
+# ---------------- SAFE MODEL LOADING FIX ----------------
+model = None
+vectorizer = None
+label_encoder = None
+current_accuracy = 0.0
+
+def _safe_load_joblib(path, desc):
+    try:
+        obj = joblib.load(path)
+        print(f"✅ Loaded {desc} from {path}")
+        return obj
+    except FileNotFoundError:
+        print(f"⚠️ {desc} not found at {path}. Creating fallback.")
+    except Exception as e:
+        print(f"⚠️ Error loading {desc}: {e}")
+    return None
+
+# Load vectorizer
+vectorizer = _safe_load_joblib(VECTORIZER_PATH, "TF-IDF Vectorizer")
+if vectorizer is None:
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    vectorizer = TfidfVectorizer(max_features=5000)
+    print("ℹ️ Created fallback TfidfVectorizer (unfitted).")
+
+# Load encoder
+label_encoder = _safe_load_joblib(ENCODER_PATH, "Label Encoder")
+if label_encoder is None:
+    label_encoder = LabelEncoder()
+    label_encoder.fit(ALL_CLASSES)
+    print("ℹ️ Fitted fallback LabelEncoder using ALL_CLASSES.")
+
+# Load model
+model = _safe_load_joblib(MODEL_PATH, "News Classifier Model")
+if model is None:
+    model = SGDClassifier(max_iter=1000, tol=1e-3)
+    print("ℹ️ Created fallback SGDClassifier model.")
+
+if not NEWSDATA_API_KEY:
+    print("⚠️ NEWSDATA_API_KEY not set. fetch_and_store_news() will fail if called.")
+
+
 # ---------------- Request Models ----------------
 class ForgotPasswordRequest(BaseModel):
     email: EmailStr
@@ -110,7 +151,7 @@ async def register_user(new_user: User, background_tasks: BackgroundTasks):
     user_dict["created_at"] = datetime.utcnow()
     resp = collection.insert_one(user_dict)
 
-    background_tasks.add_task(send_welcome_email, email, new_user.full_name)
+    background_tasks.add_task(lambda: send_welcome_email(email, new_user.full_name))
     return {"status": "success", "id": str(resp.inserted_id), "message": "User registered successfully"}
 
 @user_router.post("/signin")
@@ -137,7 +178,7 @@ async def forgot_password(request: ForgotPasswordRequest, background_tasks: Back
         raise HTTPException(status_code=404, detail="Email not registered")
     otp = str(random.randint(100000, 999999))
     otp_store[request.email.lower()] = {"otp": otp, "expires": datetime.utcnow() + timedelta(minutes=5)}
-    background_tasks.add_task(send_otp_email, request.email, otp)
+    background_tasks.add_task(lambda: send_otp_email(request.email, otp))
     return {"status": "success", "message": "OTP sent successfully"}
 
 @user_router.post("/reset-password")
@@ -261,9 +302,10 @@ def refresh_news(secret: str = Query(...)):
     else:
         accuracy = 0.0
 
-    return {"status": "success", "message": "News fetched & model improved", "accuracy": accuracy}
+    global current_accuracy
+    current_accuracy = accuracy
 
-    
+    return {"status": "success", "message": "News fetched & model improved", "accuracy": accuracy}
 
 TRENDING_KEYWORDS = [
     "breaking", "exclusive", "update", "live", "urgent", "just in", "latest", "alert"
@@ -271,19 +313,10 @@ TRENDING_KEYWORDS = [
 
 @news_router.get("/trending-smart")
 def get_smart_trending_news(limit: int = 100):
-    """
-    Get smart trending news from the last 7 days based on views, recency, and keywords.
-    """
     try:
         now = datetime.utcnow()
-        last_7_days = now - timedelta(days=7)  # ⏰ 7 days window
-
-        # Fetch news created in the last 7 days
-        recent_news = list(
-            news_collection.find({
-                "createdAt": {"$gte": last_7_days}
-            }).limit(300)
-        )
+        last_7_days = now - timedelta(days=7)
+        recent_news = list(news_collection.find({"createdAt": {"$gte": last_7_days}}).limit(300))
 
         trending = []
         for n in recent_news:
@@ -292,34 +325,18 @@ def get_smart_trending_news(limit: int = 100):
             created_at = n.get("createdAt", now)
             hours_old = (now - created_at).total_seconds() / 3600
 
-            # --- 🧠 Smart score calculation ---
-            # Recency decay: newer news gets higher score but stays valid up to 7 days
-            recency_boost = max(0, int(168 - hours_old)) // 8  # 168 = 7 days * 24 hours
-
-            # Keyword boost if trending-related words appear
+            recency_boost = max(0, int(168 - hours_old)) // 8
             keyword_boost = 20 if any(kw in title for kw in TRENDING_KEYWORDS) else 0
-
-            # Final score (balanced)
             score = (views * 2.5) + keyword_boost + recency_boost
 
             n["trending_score"] = score
             n["_id"] = str(n["_id"])
             trending.append(n)
 
-        # Sort by score (descending)
         trending = sorted(trending, key=lambda x: x["trending_score"], reverse=True)[:limit]
-
-        return {
-            "status": "success",
-            "count": len(trending),
-            "articles": trending
-        }
-
+        return {"status": "success", "count": len(trending), "articles": trending}
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error fetching smart trending news: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Error fetching smart trending news: {str(e)}")
 
 # ---------------- Report Route ----------------
 @report_router.post("/misinformation")
@@ -361,11 +378,7 @@ async def report_misinformation(
         <p>— The Fake News Detector Team</p>
         """
 
-        send_email(
-            to_email=email,
-            subject=subject_user,
-            body=body_user
-        )
+        send_email(to_email=email, subject=subject_user, body=body_user)
 
         if attachment_path and os.path.exists(attachment_path):
             os.remove(attachment_path)
