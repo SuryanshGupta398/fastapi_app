@@ -212,6 +212,57 @@ def fetch_and_store_news(lang="en", pages=2):
         else:
             break
     print(f"[{lang}] ✅ Inserted {inserted_total} new articles")
+    if X_new:
+        X_vec_new = vectorizer.transform(X_new)
+        y_new_int = label_encoder.transform(y_new_str)
+        all_classes_int = np.arange(len(label_encoder.classes_))
+        model.partial_fit(X_vec_new, y_new_int, classes=all_classes_int)
+        joblib.dump(model, MODEL_PATH)
+        print(f"🤖 Model improved with {len(X_new)} new samples!")
+
+# ---------------- News Routes ----------------
+@news_router.get("/")
+def get_news(language: str = "en", limit: int = 20):
+    news = list(news_collection.find({"language": language}).sort("createdAt", -1).limit(limit))
+    for n in news:
+        n["_id"] = str(n["_id"])
+    return {"articles": news}
+
+@news_router.get("/category/{category}")
+def get_news_by_category(category: str, language: str = "en", limit: int = 50):
+    news = list(news_collection.find({"category": category, "language": language}).sort("createdAt", -1).limit(limit))
+    for n in news:
+        n["_id"] = str(n["_id"])
+    return {"count": len(news), "articles": news}
+
+@news_router.get("/all")
+def get_all_news():
+    news = list(news_collection.find().sort("createdAt", -1))
+    for n in news:
+        n["_id"] = str(n["_id"])
+    return {"count": len(news), "articles": news}
+
+@news_router.get("/refresh")
+def refresh_news(secret: str = Query(...)):
+    if secret != CRON_SECRET:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    fetch_and_store_news("en")
+    fetch_and_store_news("hi")
+
+    news_docs = list(news_collection.find({"category": {"$exists": True}}))
+    if news_docs:
+        X_test = [doc["title"] for doc in news_docs]
+        y_true_str = [doc["category"] for doc in news_docs]
+        X_vec = vectorizer.transform(X_test)
+        y_true_int = label_encoder.transform(y_true_str)
+        y_pred_int = model.predict(X_vec)
+        accuracy = round(accuracy_score(y_true_int, y_pred_int) * 100, 2)
+    else:
+        accuracy = 0.0
+
+    return {"status": "success", "message": "News fetched & model improved", "accuracy": accuracy}
+
     
 
 TRENDING_KEYWORDS = [
