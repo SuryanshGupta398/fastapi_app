@@ -339,53 +339,109 @@ def get_smart_trending_news(limit: int = 100):
         raise HTTPException(status_code=500, detail=f"Error fetching smart trending news: {str(e)}")
 
 # ---------------- Verify News Route (Google Fact Check API) ----------------
+# ---------------- Verify News Route (Integrated: Google Fact Check + Local DB) ----------------
 @news_router.post("/verify-news")
 async def verify_news(headline: str = Form(...)):
     """
-    Verify a news headline using Google Fact Check Tools API.
+    Verify a news headline using both:
+    1. Google Fact Check Tools API
+    2. Local stored verified news database (news_collection)
+    Combines both for higher accuracy.
     """
     try:
         GOOGLE_KEY = os.getenv("GOOGLE_FACTCHECK_KEY")
         if not GOOGLE_KEY:
             raise HTTPException(status_code=500, detail="Google Fact Check API key not configured.")
 
-        url = f"https://factchecktools.googleapis.com/v1alpha1/claims:search?query={headline}&key={GOOGLE_KEY}"
-        response = requests.get(url, timeout=30)
-        if response.status_code != 200:
-            raise HTTPException(status_code=500, detail=f"Google API error: {response.text}")
+        # --- 1️⃣ Search Google Fact Check Tools API ---
+        google_url = f"https://factchecktools.googleapis.com/v1alpha1/claims:search?query={headline}&key={GOOGLE_KEY}"
+        google_response = requests.get(google_url, timeout=30)
+        google_data = google_response.json() if google_response.status_code == 200 else {}
 
-        data = response.json()
-        claims = data.get("claims", [])
-        if not claims:
+        google_claims = google_data.get("claims", [])
+        google_result = None
+
+        if google_claims:
+            claim = google_claims[0]
+            review = claim.get("claimReview", [{}])[0]
+            rating = review.get("textualRating", "Unknown")
+            publisher = review.get("publisher", {}).get("name", "Unknown Source")
+            fact_url = review.get("url", "")
+            confidence = (
+                0.9 if "true" in rating.lower()
+                else 0.6 if "partly" in rating.lower() or "mixed" in rating.lower()
+                else 0.3
+            )
+            google_result = {
+                "rating": rating,
+                "source": publisher,
+                "link": fact_url,
+                "confidence": confidence,
+                "verdict": True if "true" in rating.lower() else False,
+            }
+
+        # --- 2️⃣ Search Local News Database (news_collection) ---
+        local_result = news_collection.find_one({"title": {"$regex": headline, "$options": "i"}})
+        db_result = None
+        if local_result:
+            db_result = {
+                "rating": "True" if local_result.get("category", "").lower() not in ["fake", "false"] else "False",
+                "source": local_result.get("source", "LocalDB"),
+                "link": local_result.get("url", ""),
+                "confidence": 0.85 if "true" in local_result.get("category", "").lower() else 0.3,
+                "verdict": True if "true" in local_result.get("category", "").lower() else False,
+            }
+
+        # --- 3️⃣ Combine both results ---
+        if google_result and db_result:
+            final_confidence = round((google_result["confidence"] + db_result["confidence"]) / 2, 2)
+            final_verdict = google_result["verdict"] or db_result["verdict"]
+            return {
+                "status": "success",
+                "headline": headline,
+                "verified": final_verdict,
+                "confidence": final_confidence,
+                "rating": "True" if final_verdict else "False",
+                "credible_sources": [google_result["source"], db_result["source"]],
+                "links": [google_result["link"], db_result["link"]],
+                "message": "Verified using Google Fact Check + Local Database"
+            }
+
+        elif google_result:
+            return {
+                "status": "success",
+                "headline": headline,
+                "verified": google_result["verdict"],
+                "confidence": google_result["confidence"],
+                "rating": google_result["rating"],
+                "credible_source": google_result["source"],
+                "link": google_result["link"],
+                "message": f"Verified using Google Fact Check ({google_result['source']})"
+            }
+
+        elif db_result:
+            return {
+                "status": "success",
+                "headline": headline,
+                "verified": db_result["verdict"],
+                "confidence": db_result["confidence"],
+                "rating": db_result["rating"],
+                "credible_source": db_result["source"],
+                "link": db_result["link"],
+                "message": f"Verified from local database ({db_result['source']})"
+            }
+
+        else:
             return {
                 "status": "not_found",
                 "headline": headline,
                 "verified": False,
                 "confidence": 0.4,
-                "rating": "No matching fact-check found",
+                "rating": "Unverified",
                 "credible_source": None,
                 "link": None,
-                "message": "No verification data available for this news."
+                "message": "No verification found in Google Fact Check or Local DB."
             }
-
-        # Take the top claim
-        claim = claims[0]
-        review = claim.get("claimReview", [{}])[0]
-        rating = review.get("textualRating", "Unknown")
-        publisher = review.get("publisher", {}).get("name", "Unknown Source")
-        url = review.get("url", "")
-        confidence = 0.9 if rating.lower() in ["true", "mostly true"] else 0.6 if rating.lower() in ["mixed", "partly true"] else 0.3
-
-        return {
-            "status": "success",
-            "headline": headline,
-            "verified": True if rating.lower() in ["true", "mostly true"] else False,
-            "confidence": confidence,
-            "rating": rating,
-            "credible_source": publisher,
-            "link": url,
-            "message": f"This news is rated '{rating}' by {publisher}.",
-        }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error verifying news: {str(e)}")
