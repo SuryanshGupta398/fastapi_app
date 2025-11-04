@@ -486,6 +486,58 @@ async def verify_news_advanced(headline: str = Form(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error verifying news: {str(e)}")
 
+# ---------------- Traveller Updates (Local DB only) ----------------
+@news_router.get("/traveller-updates")
+def traveller_updates(location: str = Query(..., description="City or country name")):
+    """
+    Fetches travel-related news for travellers based on the given location
+    from the existing MongoDB (news_collection). No external API used.
+    """
+    try:
+        # Find local travel news matching the location
+        travel_keywords = ["travel", "tourism", "flight", "airport", "visa", "trip", "hotel", "journey", "holiday"]
+        regex_filter = {"$regex": "|".join(travel_keywords), "$options": "i"}
+
+        cursor = news_collection.find({
+            "$and": [
+                {"$or": [{"title": regex_filter}, {"description": regex_filter}, {"category": {"$regex": "travel", "$options": "i"}}]},
+                {"title": {"$regex": location, "$options": "i"}}
+            ]
+        }).sort("createdAt", -1)
+
+        results = list(cursor)
+        for n in results:
+            n["_id"] = str(n["_id"])
+
+        if not results:
+            return {
+                "status": "not_found",
+                "location": location,
+                "verified": False,
+                "confidence": 0.4,
+                "count": 0,
+                "travel_news": [],
+                "message": f"No travel updates found for '{location}' in local database."
+            }
+
+        # If found, compute confidence & credibility
+        credible_sources = list({n.get("source", "LocalDB") for n in results if n.get("source")})
+        avg_confidence = 0.9 if len(results) > 3 else 0.7
+
+        return {
+            "status": "success",
+            "location": location,
+            "verified": True,
+            "confidence": avg_confidence,
+            "count": len(results),
+            "credible_sources": credible_sources,
+            "travel_news": results,
+            "message": f"Fetched {len(results)} travel updates for '{location}' from local DB."
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching traveller updates: {str(e)}")
+
 # ---------------- Report Route ----------------
 @report_router.post("/misinformation")
 async def report_misinformation(
