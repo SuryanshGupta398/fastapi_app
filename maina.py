@@ -351,7 +351,7 @@ async def verify_news_advanced(headline: str = Form(...)):
     """
     try:
         GOOGLE_KEY = os.getenv("GOOGLE_FACTCHECK_KEY")
-        NEWS_API_KEY = os.getenv("NEWSAPI_KEY")
+        NEWS_API_KEY = os.getenv("NEWSDATA_API_KEY")
 
         if not GOOGLE_KEY or not NEWS_API_KEY:
             raise HTTPException(status_code=500, detail="API keys not configured properly.")
