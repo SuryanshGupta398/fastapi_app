@@ -341,82 +341,146 @@ def get_smart_trending_news(limit: int = 100):
 # ---------------- Verify News Route (Google Fact Check API) ----------------
 # ---------------- Verify News Route (Integrated: Google Fact Check + Local DB) ----------------
 @news_router.post("/verify-news")
-async def verify_news(headline: str = Form(...)):
+async def verify_news_advanced(headline: str = Form(...)):
     """
-    Verify a news headline using:
-    1. Google Fact Check Tools API
-    2. Local MongoDB verified articles
-    Returns combined verified news list with confidence scores and links.
+    Enhanced verification combining:
+    1️⃣ Google Fact Check
+    2️⃣ Local MongoDB News
+    3️⃣ NewsAPI (real-time articles)
+    with multi-phrase search + confidence fusion.
     """
     try:
         GOOGLE_KEY = os.getenv("GOOGLE_FACTCHECK_KEY")
-        if not GOOGLE_KEY:
-            raise HTTPException(status_code=500, detail="Google Fact Check API key not configured.")
+        NEWS_API_KEY = os.getenv("NEWSAPI_KEY")
 
-        # --- 1️⃣ Google Fact Check ---
-        google_url = f"https://factchecktools.googleapis.com/v1alpha1/claims:search?query={headline}&key={GOOGLE_KEY}"
-        google_response = requests.get(google_url, timeout=30)
-        google_data = google_response.json() if google_response.status_code == 200 else {}
+        if not GOOGLE_KEY or not NEWS_API_KEY:
+            raise HTTPException(status_code=500, detail="API keys not configured properly.")
 
-        google_claims = google_data.get("claims", [])
-        google_verified = []
+        headline_clean = headline.strip()
+        if not headline_clean:
+            raise HTTPException(status_code=400, detail="Headline cannot be empty")
 
-        for claim in google_claims:
-            reviews = claim.get("claimReview", [])
-            for r in reviews:
-                rating = r.get("textualRating", "Unknown")
-                publisher = r.get("publisher", {}).get("name", "Unknown Source")
-                fact_url = r.get("url", "")
-                if any(x in rating.lower() for x in ["true", "mostly true"]):
-                    confidence = 0.9
-                    google_verified.append({
-                        "source": publisher,
-                        "rating": rating,
-                        "link": fact_url,
-                        "confidence": confidence,
-                        "verdict": True
-                    })
+        # --- 🔹 Step 1: Split headline into search phrases ---
+        import re
+        words = [w for w in re.findall(r"\w+", headline_clean.lower()) if len(w) > 2]
+        phrase_chunks = []
+        for i in range(0, len(words)):
+            phrase = " ".join(words[i:i+4])
+            if len(phrase.split()) >= 2:
+                phrase_chunks.append(phrase)
+        if not phrase_chunks:
+            phrase_chunks = [headline_clean]
 
-        # --- 2️⃣ Local DB Search ---
-        db_verified = []
-        local_results = news_collection.find({"title": {"$regex": headline, "$options": "i"}})
-        for doc in local_results:
-            category = doc.get("category", "").lower()
-            if category not in ["fake", "false"]:
-                db_verified.append({
-                    "source": doc.get("source", "LocalDB"),
-                    "rating": "True",
-                    "link": doc.get("url", ""),
-                    "confidence": 0.85,
-                    "verdict": True
-                })
+        all_sources = []
+        all_links = []
+        verified_status = False
+        total_confidence = 0.0
+        found_count = 0
 
-        # --- 3️⃣ Combine Results ---
-        if not google_verified and not db_verified:
+        # --- 🔹 Step 2: Google Fact Check API ---
+        google_confidence = 0.0
+        google_result = None
+        try:
+            google_url = f"https://factchecktools.googleapis.com/v1alpha1/claims:search?query={headline_clean}&key={GOOGLE_KEY}"
+            g_res = requests.get(google_url, timeout=30)
+            g_data = g_res.json() if g_res.status_code == 200 else {}
+            claims = g_data.get("claims", [])
+            if claims:
+                claim = claims[0]
+                review = claim.get("claimReview", [{}])[0]
+                rating = review.get("textualRating", "Unknown")
+                publisher = review.get("publisher", {}).get("name", "Unknown Source")
+                link = review.get("url", "")
+                google_confidence = (
+                    0.9 if "true" in rating.lower() else
+                    0.6 if "partly" in rating.lower() else
+                    0.3
+                )
+                google_result = {
+                    "rating": rating,
+                    "source": publisher,
+                    "link": link,
+                    "confidence": google_confidence,
+                    "verdict": True if "true" in rating.lower() else False,
+                }
+                all_sources.append(publisher)
+                all_links.append(link)
+                total_confidence += google_confidence
+                found_count += 1
+                verified_status = verified_status or google_result["verdict"]
+        except Exception as e:
+            print("⚠️ Google FactCheck error:", e)
+
+        # --- 🔹 Step 3: Local DB search with fuzzy regex match ---
+        try:
+            local_hits = []
+            for phrase in phrase_chunks:
+                cursor = news_collection.find({"title": {"$regex": phrase, "$options": "i"}})
+                for n in cursor:
+                    local_hits.append(n)
+            unique_local = {n["url"]: n for n in local_hits if n.get("url")}.values()
+            for n in unique_local:
+                src = n.get("source", "LocalDB")
+                all_sources.append(src)
+                all_links.append(n.get("url", ""))
+                local_conf = 0.85
+                total_confidence += local_conf
+                found_count += 1
+                verified_status = True
+        except Exception as e:
+            print("⚠️ Local DB search error:", e)
+
+        # --- 🔹 Step 4: NewsAPI search for credible live sources ---
+        try:
+            credible_domains = [
+                "bbc.com", "reuters.com", "indiatimes.com", "ndtv.com",
+                "thehindu.com", "hindustantimes.com", "cnn.com", "apnews.com"
+            ]
+            newsapi_results = []
+            for phrase in phrase_chunks:
+                url = f"https://newsapi.org/v2/everything?q={phrase}&apiKey={NEWS_API_KEY}&language=en"
+                res = requests.get(url, timeout=20)
+                data = res.json()
+                for a in data.get("articles", []):
+                    source_name = a["source"].get("name", "")
+                    link = a.get("url", "")
+                    if any(domain in link for domain in credible_domains):
+                        newsapi_results.append((source_name, link))
+            for src, link in set(newsapi_results):
+                all_sources.append(src)
+                all_links.append(link)
+                total_confidence += 0.8
+                found_count += 1
+                verified_status = True
+        except Exception as e:
+            print("⚠️ NewsAPI error:", e)
+
+        # --- 🔹 Step 5: Deduplicate + Finalize response ---
+        unique_sources = list(set([s for s in all_sources if s]))
+        unique_links = list(set([l for l in all_links if l]))
+        avg_conf = round(total_confidence / max(found_count, 1), 2)
+
+        if not unique_sources:
             return {
                 "status": "not_found",
-                "headline": headline,
+                "headline": headline_clean,
                 "verified": False,
                 "confidence": 0.4,
                 "rating": "Unverified",
                 "credible_sources": [],
                 "links": [],
-                "message": "No verified result found in Google Fact Check or Local DB."
+                "message": "No verified result found in Google Fact Check, Local DB, or NewsAPI."
             }
-
-        all_verified = google_verified + db_verified
-        avg_conf = round(sum(v["confidence"] for v in all_verified) / len(all_verified), 2)
 
         return {
             "status": "success",
-            "headline": headline,
-            "verified": True,
+            "headline": headline_clean,
+            "verified": verified_status,
             "confidence": avg_conf,
-            "rating": "True",
-            "credible_sources": [v["source"] for v in all_verified],
-            "links": [v["link"] for v in all_verified if v["link"]],
-            "verified_articles": all_verified,
-            "message": "Verified using Google Fact Check and Local Database"
+            "rating": "True" if verified_status else "False",
+            "credible_sources": unique_sources,
+            "links": unique_links,
+            "message": "Verified using Google Fact Check + Local DB + NewsAPI"
         }
 
     except Exception as e:
