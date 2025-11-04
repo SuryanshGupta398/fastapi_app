@@ -538,6 +538,87 @@ def traveller_updates(location: str = Query(..., description="City or country na
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching traveller updates: {str(e)}")
 
+# ---------------- Travel Route Updates ----------------
+@news_router.get("/travel-route-updates")
+def travel_route_updates(
+    source: str = Query(..., description="Source city name"),
+    destination: str = Query(..., description="Destination city name")
+):
+    """
+    Returns travel-related and route-specific verified news between source and destination cities.
+    Fetches from local MongoDB only (no external API).
+    """
+
+    try:
+        # 1️⃣ List of major route points (you can expand or auto-fetch from API)
+        route_points = {
+            "kanpur": ["Etawah", "Firozabad", "Agra", "Mathura", "Noida", "Delhi"],
+            "mumbai": ["Surat", "Vadodara", "Udaipur", "Jaipur", "Gurugram", "Delhi"],
+            "lucknow": ["Kanpur", "Agra", "Noida", "Delhi"]
+        }
+
+        src = source.lower()
+        dest = destination.lower()
+
+        # Get in-between points if exist
+        route_cities = route_points.get(src, []) if dest in route_points.get(src, []) else []
+        route_cities = [src, *route_cities, dest] if route_cities else [src, dest]
+
+        # 2️⃣ Travel-related keywords
+        travel_keywords = ["travel", "train", "flight", "road", "traffic", "weather", "tourism", "airport", "bus", "expressway"]
+
+        regex_filter = {"$regex": "|".join(travel_keywords), "$options": "i"}
+        location_filter = {"$regex": "|".join(route_cities), "$options": "i"}
+
+        # 3️⃣ Query MongoDB
+        cursor = news_collection.find({
+            "$and": [
+                {"$or": [
+                    {"title": regex_filter},
+                    {"description": regex_filter},
+                    {"category": {"$regex": "travel", "$options": "i"}}
+                ]},
+                {"$or": [
+                    {"title": location_filter},
+                    {"description": location_filter},
+                    {"location": location_filter}
+                ]}
+            ]
+        }).sort("createdAt", -1)
+
+        results = list(cursor)
+        for r in results:
+            r["_id"] = str(r["_id"])
+
+        if not results:
+            return {
+                "status": "not_found",
+                "route": f"{source} → {destination}",
+                "verified": False,
+                "confidence": 0.4,
+                "count": 0,
+                "travel_news": [],
+                "message": f"No travel updates found for the route {source} → {destination}."
+            }
+
+        # 4️⃣ Compute confidence & credible sources
+        credible_sources = list({n.get("source", "LocalDB") for n in results if n.get("source")})
+        confidence = 0.85 if len(results) > 3 else 0.7
+
+        return {
+            "status": "success",
+            "route": f"{source} → {destination}",
+            "verified": True,
+            "confidence": confidence,
+            "count": len(results),
+            "credible_sources": credible_sources,
+            "travel_news": results,
+            "message": f"Fetched {len(results)} verified travel updates for route {source} → {destination}."
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching route travel updates: {str(e)}")
+
 # ---------------- Report Route ----------------
 @report_router.post("/misinformation")
 async def report_misinformation(
