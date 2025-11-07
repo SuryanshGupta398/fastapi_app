@@ -347,7 +347,7 @@ async def verify_news_advanced(headline: str = Form(...)):
     1️⃣ Google Fact Check
     2️⃣ Local MongoDB News
     3️⃣ NewsAPI (real-time articles)
-    with multi-phrase search + confidence fusion.
+    with contextual confidence & threshold classification.
     """
     try:
         GOOGLE_KEY = os.getenv("GOOGLE_FACTCHECK_KEY")
@@ -360,7 +360,6 @@ async def verify_news_advanced(headline: str = Form(...)):
         if not headline_clean:
             raise HTTPException(status_code=400, detail="Headline cannot be empty")
 
-        # --- 🔹 Step 1: Split headline into search phrases ---
         import re
         words = [w for w in re.findall(r"\w+", headline_clean.lower()) if len(w) > 2]
         phrase_chunks = []
@@ -371,15 +370,12 @@ async def verify_news_advanced(headline: str = Form(...)):
         if not phrase_chunks:
             phrase_chunks = [headline_clean]
 
-        all_sources = []
-        all_links = []
+        all_sources, all_links = [], []
+        total_confidence, found_count = 0.0, 0
         verified_status = False
-        total_confidence = 0.0
-        found_count = 0
 
-        # --- 🔹 Step 2: Google Fact Check API ---
+        # --- 🔹 Step 1: Google Fact Check ---
         google_confidence = 0.0
-        google_result = None
         try:
             google_url = f"https://factchecktools.googleapis.com/v1alpha1/claims:search?query={headline_clean}&key={GOOGLE_KEY}"
             g_res = requests.get(google_url, timeout=30)
@@ -394,93 +390,79 @@ async def verify_news_advanced(headline: str = Form(...)):
                 google_confidence = (
                     0.9 if "true" in rating.lower() else
                     0.6 if "partly" in rating.lower() else
-                    0.3
+                    0.2 if "false" in rating.lower() else
+                    0.5
                 )
-                google_result = {
-                    "rating": rating,
-                    "source": publisher,
-                    "link": link,
-                    "confidence": google_confidence,
-                    "verdict": True if "true" in rating.lower() else False,
-                }
+                verdict = True if "true" in rating.lower() else False
                 all_sources.append(publisher)
                 all_links.append(link)
                 total_confidence += google_confidence
                 found_count += 1
-                verified_status = verified_status or google_result["verdict"]
+                verified_status = verified_status or verdict
         except Exception as e:
             print("⚠️ Google FactCheck error:", e)
 
-        # --- 🔹 Step 3: Local DB search with fuzzy regex match ---
+        # --- 🔹 Step 2: Local DB search ---
         try:
             local_hits = []
             for phrase in phrase_chunks:
                 cursor = news_collection.find({"title": {"$regex": phrase, "$options": "i"}})
-                for n in cursor:
-                    local_hits.append(n)
-            unique_local = {n["url"]: n for n in local_hits if n.get("url")}.values()
-            for n in unique_local:
+                local_hits.extend(list(cursor))
+
+            for n in {n["url"]: n for n in local_hits if n.get("url")}.values():
                 src = n.get("source", "LocalDB")
                 all_sources.append(src)
                 all_links.append(n.get("url", ""))
-                local_conf = 0.85
-                total_confidence += local_conf
+                total_confidence += 0.8
                 found_count += 1
                 verified_status = True
         except Exception as e:
             print("⚠️ Local DB search error:", e)
 
-        # --- 🔹 Step 4: NewsAPI search for credible live sources ---
+        # --- 🔹 Step 3: NewsAPI credible sources ---
         try:
             credible_domains = [
                 "bbc.com", "reuters.com", "indiatimes.com", "ndtv.com",
                 "thehindu.com", "hindustantimes.com", "cnn.com", "apnews.com"
             ]
-            newsapi_results = []
             for phrase in phrase_chunks:
                 url = f"https://newsapi.org/v2/everything?q={phrase}&apiKey={NEWS_API_KEY}&language=en"
                 res = requests.get(url, timeout=20)
                 data = res.json()
                 for a in data.get("articles", []):
-                    source_name = a["source"].get("name", "")
                     link = a.get("url", "")
                     if any(domain in link for domain in credible_domains):
-                        newsapi_results.append((source_name, link))
-            for src, link in set(newsapi_results):
-                all_sources.append(src)
-                all_links.append(link)
-                total_confidence += 0.8
-                found_count += 1
-                verified_status = True
+                        all_sources.append(a["source"].get("name", ""))
+                        all_links.append(link)
+                        total_confidence += 0.75
+                        found_count += 1
+                        verified_status = True
         except Exception as e:
             print("⚠️ NewsAPI error:", e)
 
-        # --- 🔹 Step 5: Deduplicate + Finalize response ---
+        # --- 🔹 Step 4: Combine and classify ---
+        avg_conf = round(total_confidence / max(found_count, 1), 2)
         unique_sources = list(set([s for s in all_sources if s]))
         unique_links = list(set([l for l in all_links if l]))
-        avg_conf = round(total_confidence / max(found_count, 1), 2)
 
-        if not unique_sources:
-            return {
-                "status": "not_found",
-                "headline": headline_clean,
-                "verified": False,
-                "confidence": 0.4,
-                "rating": "Unverified",
-                "credible_sources": [],
-                "links": [],
-                "message": "No verified result found in Google Fact Check, Local DB, or NewsAPI."
-            }
+        # Confidence-based classification
+        if avg_conf >= 0.7:
+            final_rating = "True"
+        elif avg_conf <= 0.3:
+            final_rating = "Fake"
+        else:
+            final_rating = "Uncertain"
 
+        # --- 🔹 Step 5: Response ---
         return {
             "status": "success",
             "headline": headline_clean,
-            "verified": verified_status,
+            "verified": final_rating == "True",
             "confidence": avg_conf,
-            "rating": "True" if verified_status else "False",
+            "rating": final_rating,
             "credible_sources": unique_sources,
             "links": unique_links,
-            "message": "Verified using Google Fact Check + Local DB + NewsAPI"
+            "message": f"Verification completed with {final_rating} result."
         }
 
     except Exception as e:
