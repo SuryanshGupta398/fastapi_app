@@ -24,6 +24,7 @@ pandas==2.1.4
 nltk==3.9.1
 scikit-learn==1.5.1
 joblib==1.4.2
+textblob==0.17.1
 
 # --- Optional performance boosts ---
 tqdm==4.66.5
