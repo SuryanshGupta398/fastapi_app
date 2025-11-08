@@ -402,102 +402,95 @@ def get_smart_trending_news(limit: int = 100):
 
 # ---------------- Verify News Route (Google Fact Check API) ----------------
 # ---------------- Verify News Route (Integrated: Google Fact Check + Local DB) ----------------
+def predict_news(headline: str):
+    """Predict using trained ML model."""
+    try:
+        if not isinstance(headline, str):
+            headline = str(headline)
+        text = headline.lower().strip()
+        vector = vectorizer.transform([text])
+        pred = ml_model.predict(vector)
+        prob = ml_model.predict_proba(vector).max()
+        return pred[0], float(prob)
+    except Exception as e:
+        print("⚠️ ML prediction error:", e)
+        return "uncertain", 0.5
+
+
 @news_router.post("/verify-news")
 async def verify_news(headline: str = Form(...)):
     """
-    🔍 Multi-layer Fake News Verification
-    Combines: NewsData.io, GNews, Google FactCheck, MongoDB, ML Model
+    Verify headline using:
+    1️⃣ GNews API
+    2️⃣ NewsData.io API
+    3️⃣ MongoDB (local DB)
+    4️⃣ Trained ML Model
     """
     try:
-        headline_clean = headline.strip()
-        if not headline_clean:
+        GNEWS_API_KEY = os.getenv("GNEWS_API_KEY")
+        NEWSDATA_API_KEY = os.getenv("NEWSDATA_API_KEY")
+
+        if not headline.strip():
             raise HTTPException(status_code=400, detail="Headline cannot be empty")
 
-        # --- CONFIG ---
-        NEWSDATA_API_KEY = os.getenv("NEWSDATA_API_KEY")
-        GNEWS_API_KEY = os.getenv("GNEWS_API_KEY")
-        GOOGLE_FACTCHECK_KEY = os.getenv("GOOGLE_FACTCHECK_KEY")
-
+        headline_clean = headline.strip()
         total_confidence = 0.0
         found_sources = []
         found_count = 0
 
-        # Helper for adding weighted confidence
-        def add_confidence(value, source):
-            nonlocal total_confidence, found_sources, found_count
-            total_confidence += value
-            found_sources.append(source)
+        # --- 🔹 1. GNews API ---
+        try:
+            gnews_url = f"https://gnews.io/api/v4/search?q={headline_clean}&token={GNEWS_API_KEY}&lang=en"
+            g_res = requests.get(gnews_url, timeout=20).json()
+            articles = g_res.get("articles", [])
+            if articles:
+                found_count += 1
+                total_confidence += 0.75
+                found_sources.append("GNews")
+        except Exception as e:
+            print("⚠️ GNews error:", e)
+
+        # --- 🔹 2. NewsData.io ---
+        try:
+            nd_url = f"https://newsdata.io/api/1/news?apikey={NEWSDATA_API_KEY}&q={headline_clean}&language=en"
+            nd_res = requests.get(nd_url, timeout=20).json()
+            results = nd_res.get("results", [])
+            if results:
+                found_count += 1
+                total_confidence += 0.75
+                found_sources.append("NewsData.io")
+        except Exception as e:
+            print("⚠️ NewsData.io error:", e)
+
+        # --- 🔹 3. MongoDB local database check ---
+        try:
+            query = {"title": {"$regex": headline_clean, "$options": "i"}}
+            local_news = list(news_collection.find(query))
+            if local_news:
+                found_count += 1
+                total_confidence += 0.8
+                found_sources.append("LocalDB")
+        except Exception as e:
+            print("⚠️ MongoDB check error:", e)
+
+        # --- 🔹 4. ML Model prediction ---
+        try:
+            ml_pred, ml_conf = predict_news(headline_clean)
+            if ml_pred == "REAL":
+                total_confidence += ml_conf
+            elif ml_pred == "FAKE":
+                total_confidence -= ml_conf / 2
             found_count += 1
-
-        # --- 1️⃣ NewsData.io Check ---
-        try:
-            url = f"https://newsdata.io/api/1/news?apikey={NEWSDATA_API_KEY}&q={headline_clean}"
-            res = requests.get(url, timeout=20).json()
-            if res.get("results"):
-                add_confidence(0.8, "NewsData.io")
-            else:
-                add_confidence(0.4, "NewsData.io (not found)")
+            found_sources.append("ML Model")
         except Exception as e:
-            print("NewsData Error:", e)
+            print("⚠️ ML Model error:", e)
 
-        # --- 2️⃣ GNews Check ---
-        try:
-            url = f"https://gnews.io/api/v4/search?q={headline_clean}&token={GNEWS_API_KEY}&lang=en"
-            res = requests.get(url, timeout=20).json()
-            if res.get("articles"):
-                add_confidence(0.8, "GNews")
-            else:
-                add_confidence(0.4, "GNews (not found)")
-        except Exception as e:
-            print("GNews Error:", e)
+        # --- 🔹 Calculate final confidence ---
+        avg_conf = round(total_confidence / max(found_count, 1), 2)
 
-        # --- 3️⃣ Google Fact Check ---
-        try:
-            fc_url = f"https://factchecktools.googleapis.com/v1alpha1/claims:search?query={headline_clean}&key={GOOGLE_FACTCHECK_KEY}"
-            res = requests.get(fc_url, timeout=20).json()
-            claims = res.get("claims", [])
-            if claims:
-                claim = claims[0]
-                review = claim.get("claimReview", [{}])[0]
-                rating = review.get("textualRating", "Unknown")
-                if "true" in rating.lower():
-                    add_confidence(0.9, "Google FactCheck (True)")
-                elif "false" in rating.lower():
-                    add_confidence(0.2, "Google FactCheck (False)")
-                else:
-                    add_confidence(0.5, "Google FactCheck (Uncertain)")
-            else:
-                add_confidence(0.4, "Google FactCheck (not found)")
-        except Exception as e:
-            print("Google FactCheck Error:", e)
-
-        # --- 4️⃣ MongoDB Search ---
-        try:
-            matches = list(news_collection.find({"title": {"$regex": headline_clean, "$options": "i"}}))
-            if matches:
-                add_confidence(0.8, "Local MongoDB")
-            else:
-                add_confidence(0.4, "Local MongoDB (not found)")
-        except Exception as e:
-            print("MongoDB Error:", e)
-
-        # --- 5️⃣ ML Model Prediction ---
-        try:
-            text_vec = vectorizer.transform([headline_clean])
-            pred = model.predict(text_vec)[0]
-            proba = model.predict_proba(text_vec)[0].max()
-            if pred.lower() == "real":
-                add_confidence(0.8 * proba, "ML Model (Real)")
-            else:
-                add_confidence(0.3 * (1 - proba), "ML Model (Fake)")
-        except Exception as e:
-            print("ML Model Error:", e)
-
-        # --- Combine Results ---
-        avg_conf = total_confidence / max(found_count, 1)
         if avg_conf >= 0.7:
             final_rating = "True"
-        elif avg_conf <= 0.4:
+        elif avg_conf <= 0.3:
             final_rating = "Fake"
         else:
             final_rating = "Uncertain"
@@ -505,11 +498,10 @@ async def verify_news(headline: str = Form(...)):
         return {
             "status": "success",
             "headline": headline_clean,
+            "confidence": avg_conf,
             "rating": final_rating,
-            "confidence": round(avg_conf, 2),
             "sources_checked": found_sources,
-            "verified": final_rating == "True",
-            "message": f"Verified across {found_count} sources. Result: {final_rating}"
+            "message": f"✅ Verified using {len(found_sources)} sources. Result: {final_rating}"
         }
 
     except Exception as e:
