@@ -14,9 +14,9 @@ packaging==24.1
 email-validator==2.2.0
 
 # --- Semantic & Text Understanding ---
-sentence-transformers==2.2.2
-huggingface_hub==0.10.1          # ✅ Compatible version (fixes cached_download error)
-transformers==4.30.2             # ✅ Stable version for sentence-transformers
+sentence-transformers==3.1.1          # ✅ newer, stable version (uses safe API)
+transformers==4.43.3                  # ✅ compatible with latest HF hub
+huggingface-hub==0.23.0               # ✅ fixes cached_download + dependency conflicts
 textblob==0.17.1
 numpy==1.26.4
 
