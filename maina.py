@@ -412,7 +412,7 @@ async def verify_news_advanced(headline: str = Form(...)):
     """
 
     try:
-        if not GOOGLE_KEY or not NEWSDATA_KEY:
+        if not GNEWS_API_KEY or not NEWSDATA_KEY:
             raise HTTPException(status_code=500, detail="API keys not configured properly.")
 
         headline_clean = headline.strip()
