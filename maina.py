@@ -60,26 +60,27 @@ except Exception as e:
     category_encoder = None
 
 # ---------------- News Verification Service ----------------
+# ---------------- Enhanced News Verification Service ----------------
 class NewsVerificationService:
     def __init__(self):
         self.base_confidence = 0.5
     
     async def verify_news(self, news_text: str) -> dict:
-        """Main verification function that searches all sources"""
-        print(f"🔍 Verifying news: {news_text}")
+        """Main verification function that searches all sources for historical news"""
+        print(f"🔍 Verifying news (including historical): {news_text}")
         
         results = {
-            "newsdata": {"found": False, "articles": [], "confidence_impact": 0},
-            "gnews": {"found": False, "articles": [], "confidence_impact": 0},
-            "database": {"found": False, "articles": [], "confidence_impact": 0},
+            "newsdata": {"found": False, "articles": [], "confidence_impact": 0, "time_range": "current"},
+            "gnews": {"found": False, "articles": [], "confidence_impact": 0, "time_range": "current"},
+            "database": {"found": False, "articles": [], "confidence_impact": 0, "time_range": "historical"},
             "ml_model": {"verdict": "UNCERTAIN", "confidence": 0.5, "confidence_impact": 0}
         }
         
         # Run all verification checks concurrently
         tasks = [
-            self._check_newsdata(news_text),
-            self._check_gnews(news_text),
-            self._check_database(news_text),
+            self._check_newsdata_historical(news_text),
+            self._check_gnews_historical(news_text),
+            self._check_database_comprehensive(news_text),
             self._check_ml_model(news_text)
         ]
         
@@ -100,12 +101,230 @@ class NewsVerificationService:
             "final_confidence": final_confidence
         }
     
-    async def _check_newsdata(self, news_text: str) -> dict:
-        """Check with NewsData.io API"""
+    async def _check_newsdata_historical(self, news_text: str) -> dict:
+        """Check NewsData.io API with historical search capability"""
         try:
             if not NEWSDATA_API_KEY:
-                return {"found": False, "articles": [], "confidence_impact": 0, "error": "API key missing"}
+                return {"found": False, "articles": [], "confidence_impact": 0, "error": "API key missing", "time_range": "current"}
             
+            # First try current news
+            current_articles = await self._search_newsdata_timeframe(news_text, "current")
+            
+            if current_articles:
+                return {
+                    "found": True,
+                    "articles": current_articles,
+                    "confidence_impact": 0.3,
+                    "count": len(current_articles),
+                    "time_range": "current"
+                }
+            
+            # If no current news found, try searching with broader time range
+            # NewsData.io doesn't have direct historical search in free tier, but we can try without time filter
+            url = "https://newsdata.io/api/1/news"
+            params = {
+                'apikey': NEWSDATA_API_KEY,
+                'q': news_text[:500],
+                'language': 'en',
+                'size': 10  # Get more results to find historical matches
+            }
+            
+            response = requests.get(url, params=params, timeout=15)
+            
+            if response.status_code == 200:
+                data = response.json()
+                articles = data.get('results', [])
+                
+                if articles:
+                    formatted_articles = []
+                    for article in articles:
+                        pub_date = article.get('pubDate', '')
+                        time_range = self._classify_time_range(pub_date)
+                        
+                        formatted_articles.append({
+                            'title': article.get('title', ''),
+                            'description': article.get('description', ''),
+                            'source': article.get('source_id', 'Unknown'),
+                            'url': article.get('link', ''),
+                            'published_at': pub_date,
+                            'image_url': article.get('image_url', ''),
+                            'time_period': time_range
+                        })
+                    
+                    return {
+                        "found": True,
+                        "articles": formatted_articles[:5],  # Limit to 5
+                        "confidence_impact": 0.25,  # Slightly less for potentially older news
+                        "count": len(articles),
+                        "time_range": "mixed"
+                    }
+            
+            return {"found": False, "articles": [], "confidence_impact": 0, "count": 0, "time_range": "none"}
+            
+        except Exception as e:
+            print(f"NewsData API error: {e}")
+            return {"found": False, "articles": [], "confidence_impact": 0, "error": str(e), "time_range": "error"}
+    
+    async def _check_gnews_historical(self, news_text: str) -> dict:
+        """Check GNews API with historical search"""
+        try:
+            if not GNEWS_API_KEY:
+                return {"found": False, "articles": [], "confidence_impact": 0, "error": "API key missing", "time_range": "current"}
+            
+            # GNews search without time restriction to get historical results
+            url = "https://gnews.io/api/v4/search"
+            params = {
+                'q': f'"{news_text[:100]}"',
+                'token': GNEWS_API_KEY,
+                'lang': 'en',
+                'max': 10,  # Get more results
+                'sortby': 'relevance'  # Sort by relevance rather than date
+            }
+            
+            response = requests.get(url, params=params, timeout=15)
+            
+            if response.status_code == 200:
+                data = response.json()
+                articles = data.get('articles', [])
+                
+                if articles:
+                    formatted_articles = []
+                    for article in articles:
+                        pub_date = article.get('publishedAt', '')
+                        time_range = self._classify_time_range(pub_date)
+                        
+                        formatted_articles.append({
+                            'title': article.get('title', ''),
+                            'description': article.get('description', ''),
+                            'source': article.get('source', {}).get('name', 'Unknown'),
+                            'url': article.get('url', ''),
+                            'published_at': pub_date,
+                            'image_url': article.get('image', ''),
+                            'time_period': time_range
+                        })
+                    
+                    # Sort by date to show most recent first, but include historical
+                    formatted_articles.sort(key=lambda x: x.get('published_at', ''), reverse=True)
+                    
+                    return {
+                        "found": True,
+                        "articles": formatted_articles[:5],
+                        "confidence_impact": 0.25,
+                        "count": len(articles),
+                        "time_range": "mixed"
+                    }
+            
+            return {"found": False, "articles": [], "confidence_impact": 0, "count": 0, "time_range": "none"}
+            
+        except Exception as e:
+            print(f"GNews API error: {e}")
+            return {"found": False, "articles": [], "confidence_impact": 0, "error": str(e), "time_range": "error"}
+    
+    async def _check_database_comprehensive(self, news_text: str) -> dict:
+        """Check local MongoDB database for both current and historical news"""
+        try:
+            # Search in news collection without time restrictions
+            query = {
+                "$or": [
+                    {"title": {"$regex": news_text, "$options": "i"}},
+                    {"description": {"$regex": news_text, "$options": "i"}},
+                    {"content": {"$regex": news_text, "$options": "i"}}
+                ]
+            }
+            
+            # Get both recent and historical articles
+            articles = list(news_collection.find(query).sort("publishedAt", -1).limit(10))
+            
+            if articles:
+                formatted_articles = []
+                historical_count = 0
+                current_count = 0
+                
+                for article in articles:
+                    pub_date = article.get('publishedAt', '')
+                    time_range = self._classify_time_range(pub_date)
+                    
+                    if time_range == "historical":
+                        historical_count += 1
+                    else:
+                        current_count += 1
+                    
+                    formatted_articles.append({
+                        'title': article.get('title', ''),
+                        'description': article.get('description', ''),
+                        'source': article.get('source', 'Local Database'),
+                        'url': article.get('url', ''),
+                        'published_at': pub_date,
+                        'category': article.get('category', 'Unknown'),
+                        'image_url': article.get('image', ''),
+                        'time_period': time_range
+                    })
+                
+                # Determine time range for the result set
+                if historical_count > 0 and current_count == 0:
+                    time_range_label = "historical"
+                    confidence_impact = 0.2  # Historical news still valuable for verification
+                elif current_count > 0 and historical_count == 0:
+                    time_range_label = "current"
+                    confidence_impact = 0.25
+                else:
+                    time_range_label = "mixed"
+                    confidence_impact = 0.25
+                
+                return {
+                    "found": True,
+                    "articles": formatted_articles,
+                    "confidence_impact": confidence_impact,
+                    "count": len(articles),
+                    "time_range": time_range_label,
+                    "historical_articles": historical_count,
+                    "current_articles": current_count
+                }
+            
+            return {"found": False, "articles": [], "confidence_impact": 0, "count": 0, "time_range": "none"}
+            
+        except Exception as e:
+            print(f"Database search error: {e}")
+            return {"found": False, "articles": [], "confidence_impact": 0, "error": str(e), "time_range": "error"}
+    
+    def _classify_time_range(self, date_string: str) -> str:
+        """Classify article as current or historical based on publish date"""
+        try:
+            if not date_string:
+                return "unknown"
+            
+            # Parse date (handle different formats)
+            if 'T' in date_string:
+                # ISO format: 2023-12-01T10:30:00Z
+                pub_date = datetime.fromisoformat(date_string.replace('Z', '+00:00'))
+            else:
+                # Other formats, try common parsers
+                for fmt in ['%Y-%m-%d %H:%M:%S', '%Y-%m-%d', '%d/%m/%Y']:
+                    try:
+                        pub_date = datetime.strptime(date_string[:19], fmt)
+                        break
+                    except:
+                        continue
+                else:
+                    return "unknown"
+            
+            # Calculate days difference
+            now = datetime.utcnow()
+            days_diff = (now - pub_date).days
+            
+            if days_diff <= 7:
+                return "current"
+            elif days_diff <= 30:
+                return "recent"
+            else:
+                return "historical"
+                
+        except:
+            return "unknown"
+    
+    async def _search_newsdata_timeframe(self, news_text: str, timeframe: str) -> list:
+        """Helper method to search NewsData with specific timeframe"""
+        try:
             url = "https://newsdata.io/api/1/news"
             params = {
                 'apikey': NEWSDATA_API_KEY,
@@ -120,117 +339,29 @@ class NewsVerificationService:
                 data = response.json()
                 articles = data.get('results', [])
                 
-                if articles:
-                    formatted_articles = []
-                    for article in articles:
-                        formatted_articles.append({
-                            'title': article.get('title', ''),
-                            'description': article.get('description', ''),
-                            'source': article.get('source_id', 'Unknown'),
-                            'url': article.get('link', ''),
-                            'published_at': article.get('pubDate', ''),
-                            'image_url': article.get('image_url', '')
-                        })
-                    
-                    return {
-                        "found": True,
-                        "articles": formatted_articles,
-                        "confidence_impact": 0.3,
-                        "count": len(articles)
-                    }
-            
-            return {"found": False, "articles": [], "confidence_impact": -0.2, "count": 0}
-            
-        except Exception as e:
-            print(f"NewsData API error: {e}")
-            return {"found": False, "articles": [], "confidence_impact": 0, "error": str(e)}
-    
-    async def _check_gnews(self, news_text: str) -> dict:
-        """Check with GNews API"""
-        try:
-            if not GNEWS_API_KEY:
-                return {"found": False, "articles": [], "confidence_impact": 0, "error": "API key missing"}
-            
-            url = "https://gnews.io/api/v4/search"
-            params = {
-                'q': f'"{news_text[:100]}"',
-                'token': GNEWS_API_KEY,
-                'lang': 'en',
-                'max': 5
-            }
-            
-            response = requests.get(url, params=params, timeout=10)
-            
-            if response.status_code == 200:
-                data = response.json()
-                articles = data.get('articles', [])
-                
-                if articles:
-                    formatted_articles = []
-                    for article in articles:
-                        formatted_articles.append({
-                            'title': article.get('title', ''),
-                            'description': article.get('description', ''),
-                            'source': article.get('source', {}).get('name', 'Unknown'),
-                            'url': article.get('url', ''),
-                            'published_at': article.get('publishedAt', ''),
-                            'image_url': article.get('image', '')
-                        })
-                    
-                    return {
-                        "found": True,
-                        "articles": formatted_articles,
-                        "confidence_impact": 0.25,
-                        "count": len(articles)
-                    }
-            
-            return {"found": False, "articles": [], "confidence_impact": -0.15, "count": 0}
-            
-        except Exception as e:
-            print(f"GNews API error: {e}")
-            return {"found": False, "articles": [], "confidence_impact": 0, "error": str(e)}
-    
-    async def _check_database(self, news_text: str) -> dict:
-        """Check with local MongoDB database"""
-        try:
-            # Search in news collection
-            query = {
-                "$or": [
-                    {"title": {"$regex": news_text, "$options": "i"}},
-                    {"description": {"$regex": news_text, "$options": "i"}}
-                ]
-            }
-            
-            articles = list(news_collection.find(query).limit(5))
-            
-            if articles:
                 formatted_articles = []
                 for article in articles:
+                    pub_date = article.get('pubDate', '')
+                    time_range = self._classify_time_range(pub_date)
+                    
                     formatted_articles.append({
                         'title': article.get('title', ''),
                         'description': article.get('description', ''),
-                        'source': article.get('source', 'Local Database'),
-                        'url': article.get('url', ''),
-                        'published_at': article.get('publishedAt', ''),
-                        'category': article.get('category', 'Unknown'),
-                        'image_url': article.get('image', '')
+                        'source': article.get('source_id', 'Unknown'),
+                        'url': article.get('link', ''),
+                        'published_at': pub_date,
+                        'image_url': article.get('image_url', ''),
+                        'time_period': time_range
                     })
                 
-                return {
-                    "found": True,
-                    "articles": formatted_articles,
-                    "confidence_impact": 0.2,
-                    "count": len(articles)
-                }
+                return formatted_articles
+            return []
             
-            return {"found": False, "articles": [], "confidence_impact": -0.1, "count": 0}
-            
-        except Exception as e:
-            print(f"Database search error: {e}")
-            return {"found": False, "articles": [], "confidence_impact": 0, "error": str(e)}
+        except:
+            return []
     
     async def _check_ml_model(self, news_text: str) -> dict:
-        """Check with your trained ML model"""
+        """Check with your trained ML model (unchanged)"""
         try:
             if fake_news_model is None or tfidf_vectorizer is None:
                 return {
@@ -271,12 +402,12 @@ class NewsVerificationService:
             }
     
     def _calculate_final_result(self, results: dict) -> tuple:
-        """Calculate final verdict and confidence"""
+        """Calculate final verdict and confidence - ENHANCED for historical news"""
         total_impact = 0
         
         # Sum all confidence impacts
         total_impact += results["newsdata"]["confidence_impact"]
-        total_impact += results["gnews"]["confidence_impact"]
+        total_impact += results["gnews"]["confidence_impact"] 
         total_impact += results["database"]["confidence_impact"]
         total_impact += results["ml_model"]["confidence_impact"]
         
@@ -284,16 +415,49 @@ class NewsVerificationService:
         final_confidence = self.base_confidence + total_impact
         final_confidence = max(0.0, min(1.0, final_confidence))
         
-        # Determine verdict
-        if final_confidence >= 0.7:
-            verdict = "REAL"
-        elif final_confidence <= 0.3:
-            verdict = "FAKE"
-        else:
-            verdict = "UNCERTAIN"
+        # Enhanced verdict logic considering historical news
+        ml_verdict = results["ml_model"]["verdict"]
+        ml_confidence = results["ml_model"]["confidence"]
         
-        return verdict, round(final_confidence, 3)
-
+        # Count historical vs current findings
+        historical_sources = 0
+        current_sources = 0
+        
+        for source in ["newsdata", "gnews", "database"]:
+            if results[source]["found"]:
+                if results[source]["time_range"] in ["historical", "mixed"]:
+                    historical_sources += 1
+                elif results[source]["time_range"] == "current":
+                    current_sources += 1
+        
+        # Verdict logic that values both historical and current verification
+        if ml_confidence > 0.8:
+            # High ML confidence overrides
+            final_verdict = ml_verdict
+        elif current_sources > 0:
+            # Current verification is strongest
+            if final_confidence >= 0.6:
+                final_verdict = "REAL"
+            elif final_confidence <= 0.4:
+                final_verdict = "FAKE"
+            else:
+                final_verdict = "UNCERTAIN"
+        elif historical_sources > 0:
+            # Historical verification still valuable
+            if final_confidence >= 0.65:
+                final_verdict = "REAL"
+            elif final_confidence <= 0.35:
+                final_verdict = "FAKE"
+            else:
+                final_verdict = "UNCERTAIN"
+        else:
+            # No external verification, rely on ML
+            if ml_confidence > 0.6:
+                final_verdict = ml_verdict
+            else:
+                final_verdict = "UNCERTAIN"
+        
+        return final_verdict, round(final_confidence, 3)
 # Initialize verification service
 news_verifier = NewsVerificationService()
 
@@ -401,8 +565,10 @@ async def reset_password(request: ResetPasswordRequest):
 # ---------------- NEWS VERIFICATION ROUTES ----------------
 @verify_router.post("/check-news")
 async def check_news_comprehensive(news_text: str = Form(..., description="Type the news you want to verify")):
+ @verify_router.post("/check-news")
+async def check_news_comprehensive(news_text: str = Form(..., description="Type the news you want to verify")):
     """
-    MAIN ENDPOINT: User types news and it searches ALL APIs and databases
+    MAIN ENDPOINT: User types news and it searches ALL APIs and databases for current AND historical news
     """
     try:
         if not news_text.strip():
@@ -410,15 +576,20 @@ async def check_news_comprehensive(news_text: str = Form(..., description="Type 
         
         print(f"🎯 User submitted news for verification: {news_text}")
         
-        # Verify news using all sources
+        # Verify news using all sources (including historical)
         verification_result = await news_verifier.verify_news(news_text.strip())
         
-        # Prepare response
+        # Prepare enhanced response with time analysis
         response = {
             "status": "success",
             "user_input": news_text,
             "final_verdict": verification_result["final_verdict"],
             "confidence_score": verification_result["final_confidence"],
+            "time_analysis": {
+                "sources_with_current_news": 0,
+                "sources_with_historical_news": 0,
+                "overall_time_range": "unknown"
+            },
             "sources_checked": {
                 "newsdata_api": verification_result["search_results"]["newsdata"]["found"],
                 "gnews_api": verification_result["search_results"]["gnews"]["found"],
@@ -429,16 +600,19 @@ async def check_news_comprehensive(news_text: str = Form(..., description="Type 
                 "newsdata_api": {
                     "found": verification_result["search_results"]["newsdata"]["found"],
                     "articles_count": verification_result["search_results"]["newsdata"]["count"],
+                    "time_range": verification_result["search_results"]["newsdata"]["time_range"],
                     "sample_articles": verification_result["search_results"]["newsdata"]["articles"][:2]
                 },
                 "gnews_api": {
                     "found": verification_result["search_results"]["gnews"]["found"],
                     "articles_count": verification_result["search_results"]["gnews"]["count"],
+                    "time_range": verification_result["search_results"]["gnews"]["time_range"],
                     "sample_articles": verification_result["search_results"]["gnews"]["articles"][:2]
                 },
                 "local_database": {
                     "found": verification_result["search_results"]["database"]["found"],
                     "articles_count": verification_result["search_results"]["database"]["count"],
+                    "time_range": verification_result["search_results"]["database"]["time_range"],
                     "sample_articles": verification_result["search_results"]["database"]["articles"][:2]
                 },
                 "ml_analysis": {
@@ -446,21 +620,12 @@ async def check_news_comprehensive(news_text: str = Form(..., description="Type 
                     "confidence": verification_result["search_results"]["ml_model"]["confidence"]
                 }
             },
-            "confidence_breakdown": {
-                "base_score": 0.5,
-                "newsdata_impact": verification_result["search_results"]["newsdata"]["confidence_impact"],
-                "gnews_impact": verification_result["search_results"]["gnews"]["confidence_impact"],
-                "database_impact": verification_result["search_results"]["database"]["confidence_impact"],
-                "ml_model_impact": verification_result["search_results"]["ml_model"]["confidence_impact"],
-                "total_impact": sum([
-                    verification_result["search_results"]["newsdata"]["confidence_impact"],
-                    verification_result["search_results"]["gnews"]["confidence_impact"],
-                    verification_result["search_results"]["database"]["confidence_impact"],
-                    verification_result["search_results"]["ml_model"]["confidence_impact"]
-                ])
-            },
             "verdict_explanation": get_verdict_explanation(verification_result),
-            "timestamp": datetime.utcnow().isoformat()
+            "search_metadata": {
+                "searched_historical": True,
+                "total_sources_checked": 4,
+                "timestamp": datetime.utcnow().isoformat()
+            }
         }
         
         return response
@@ -469,36 +634,52 @@ async def check_news_comprehensive(news_text: str = Form(..., description="Type 
         print(f"Error in check_news_comprehensive: {e}")
         raise HTTPException(status_code=500, detail=f"News verification failed: {str(e)}")
 
+
 def get_verdict_explanation(verification_result: dict) -> str:
-    """Generate human-readable explanation"""
+    """Generate human-readable explanation considering historical news"""
     verdict = verification_result["final_verdict"]
     confidence = verification_result["final_confidence"]
     results = verification_result["search_results"]
     
+    # Count sources and time ranges
     sources_found = []
-    if results["newsdata"]["found"]:
-        sources_found.append("NewsData")
-    if results["gnews"]["found"]:
-        sources_found.append("GNews")
-    if results["database"]["found"]:
-        sources_found.append("Local Database")
+    historical_sources = 0
+    current_sources = 0
+    
+    for source_name in ["newsdata", "gnews", "database"]:
+        source_data = results[source_name]
+        if source_data["found"]:
+            sources_found.append(source_name.capitalize())
+            if source_data["time_range"] == "current":
+                current_sources += 1
+            elif source_data["time_range"] in ["historical", "mixed"]:
+                historical_sources += 1
+    
+    ml_verdict = results["ml_model"]["verdict"]
+    ml_confidence = results["ml_model"]["confidence"]
     
     if verdict == "REAL":
-        if confidence >= 0.8:
-            return f"✅ HIGHLY CREDIBLE: This news appears authentic and was verified across {len(sources_found)} sources including {', '.join(sources_found)}. The ML model also confirms its authenticity with high confidence."
+        if current_sources > 0:
+            return f"✅ VERIFIED: This recent news appears authentic and was confirmed by {len(sources_found)} sources including {', '.join(sources_found)}."
+        elif historical_sources > 0:
+            return f"✅ HISTORICALLY VERIFIED: This news was reported by {len(sources_found)} sources in the past and appears authentic. Our AI analysis confirms credibility."
         else:
-            return f"✅ LIKELY REAL: This news appears credible based on verification from {len(sources_found)} sources. The ML analysis supports this conclusion."
+            return f"✅ LIKELY REAL: Our AI analysis indicates this news is credible with {ml_confidence:.0%} confidence."
     
     elif verdict == "FAKE":
-        if confidence <= 0.2:
-            return f"❌ HIGHLY SUSPICIOUS: This news was not found in credible sources and shows patterns consistent with misinformation. ML analysis strongly indicates fake content."
+        if ml_confidence > 0.8:
+            return f"❌ LIKELY FALSE: Our AI detection strongly indicates misinformation patterns. Multiple verification attempts found no credible sources."
         else:
-            return f"❌ LIKELY FAKE: Limited verification from credible sources. The news shows characteristics of unreliable content according to our ML model."
+            return f"❌ SUSPICIOUS: This content shows characteristics of unreliable news. No credible verification found across {len(sources_found)} searched sources."
     
     else:  # UNCERTAIN
-        return f"⚠️ UNCERTAIN: We need more information to verify this news. It was found in {len(sources_found)} sources. Please check multiple reliable sources before sharing."
+        if historical_sources > 0:
+            return f"⚠️ HISTORICAL REFERENCE FOUND: This news was reported in the past but current verification is limited. Check updated sources for confirmation."
+        elif len(sources_found) > 0:
+            return f"⚠️ NEEDS VERIFICATION: Found in {len(sources_found)} sources but our analysis is inconclusive. The news might be outdated or from limited sources."
+        else:
+            return f"⚠️ UNCERTAIN: We cannot verify this news. It may be very recent, from limited sources, or historical. Check multiple reliable sources."# ---------------- Batch Verification ----------------
 
-# ---------------- Batch Verification ----------------
 @verify_router.post("/check-multiple-news")
 async def check_multiple_news(
     news_items: list[str] = Form(..., description="List of news items to verify")
