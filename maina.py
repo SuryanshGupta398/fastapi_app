@@ -405,121 +405,99 @@ def get_smart_trending_news(limit: int = 100):
 @news_router.post("/verify-news")
 async def verify_news(headline: str = Form(...)):
     """
-    Verify a news headline using:
-    1️⃣ Google Fact Check API
-    2️⃣ Local ML fake-news model
-    3️⃣ Credible news sources (NewsData.io + GNews)
-    4️⃣ Sentiment check
+    🔍 Multi-layer Fake News Verification
+    Combines: NewsData.io, GNews, Google FactCheck, MongoDB, ML Model
     """
-
     try:
-        # Validate API keys
-        GOOGLE_KEY = os.getenv("GOOGLE_FACTCHECK_KEY")
-        if not all([NEWSDATA_API_KEY, GNEWS_API_KEY, GOOGLE_KEY]):
-            raise HTTPException(status_code=500, detail="API keys not configured properly.")
-
         headline_clean = headline.strip()
         if not headline_clean:
             raise HTTPException(status_code=400, detail="Headline cannot be empty")
 
-        all_sources, all_links = [], []
-        total_conf, found_count = 0.0, 0
-        verified_status = False
+        # --- CONFIG ---
+        NEWSDATA_API_KEY = os.getenv("NEWSDATA_API_KEY")
+        GNEWS_API_KEY = os.getenv("GNEWS_API_KEY")
+        GOOGLE_FACTCHECK_KEY = os.getenv("GOOGLE_FACTCHECK_KEY")
 
-        # ------------------ Step 1️⃣ Google Fact Check ------------------
-        try:
-            google_url = f"https://factchecktools.googleapis.com/v1alpha1/claims:search?query={headline_clean}&key={GOOGLE_KEY}"
-            g_res = requests.get(google_url, timeout=20)
-            if g_res.ok:
-                g_data = g_res.json()
-                claims = g_data.get("claims", [])
-                if claims:
-                    review = claims[0].get("claimReview", [{}])[0]
-                    rating = review.get("textualRating", "Unknown")
-                    publisher = review.get("publisher", {}).get("name", "Unknown Source")
-                    link = review.get("url", "")
+        total_confidence = 0.0
+        found_sources = []
+        found_count = 0
 
-                    google_confidence = (
-                        0.9 if "true" in rating.lower() else
-                        0.6 if "partly" in rating.lower() else
-                        0.2 if "false" in rating.lower() else
-                        0.5
-                    )
-                    if "true" in rating.lower():
-                        verified_status = True
-                    total_conf += google_confidence
-                    found_count += 1
-                    all_sources.append(publisher)
-                    if link:
-                        all_links.append(link)
-        except Exception as e:
-            print("⚠️ Google Fact Check error:", e)
-
-        # ------------------ Step 2️⃣ Local ML Model ------------------
-        try:
-            X_vec = vectorizer.transform([headline_clean])
-            pred = model.predict(X_vec)[0]
-            prob = model.predict_proba(X_vec)[0][pred]
-            local_confidence = float(prob)
-            if pred == 1:
-                verified_status = True
-            total_conf += local_confidence
+        # Helper for adding weighted confidence
+        def add_confidence(value, source):
+            nonlocal total_confidence, found_sources, found_count
+            total_confidence += value
+            found_sources.append(source)
             found_count += 1
-        except Exception as e:
-            print("⚠️ ML Model check error:", e)
 
-        # ------------------ Step 3️⃣ Credible News APIs ------------------
+        # --- 1️⃣ NewsData.io Check ---
         try:
-            # NewsData.io
-            nd_url = f"https://newsdata.io/api/1/news?apikey={NEWSDATA_API_KEY}&q={headline_clean}&language=en"
-            nd_res = requests.get(nd_url, timeout=20)
-            if nd_res.ok:
-                nd_data = nd_res.json().get("results", [])
-                credible_sources = [
-                    "bbc", "reuters", "ndtv", "cnn", "timesofindia",
-                    "hindustantimes", "thehindu", "apnews"
-                ]
-                credible_hits = [
-                    a for a in nd_data if any(src in a.get("link", "").lower() for src in credible_sources)
-                ]
-                if credible_hits:
-                    total_conf += 0.8
-                    found_count += 1
-                    verified_status = True
-                    all_sources.extend([a.get("source_id", "NewsData") for a in credible_hits])
-                    all_links.extend([a.get("link", "") for a in credible_hits])
-
-            # GNews
-            g_url = f"https://gnews.io/api/v4/search?q={headline_clean}&lang=en&country=in&max=10&apikey={GNEWS_API_KEY}"
-            g_res = requests.get(g_url, timeout=20)
-            if g_res.ok:
-                g_articles = g_res.json().get("articles", [])
-                if g_articles:
-                    total_conf += 0.7
-                    found_count += 1
-                    verified_status = True
-                    all_sources.extend([a.get("source", {}).get("name", "GNews") for a in g_articles])
-                    all_links.extend([a.get("url", "") for a in g_articles])
-
+            url = f"https://newsdata.io/api/1/news?apikey={NEWSDATA_API_KEY}&q={headline_clean}"
+            res = requests.get(url, timeout=20).json()
+            if res.get("results"):
+                add_confidence(0.8, "NewsData.io")
+            else:
+                add_confidence(0.4, "NewsData.io (not found)")
         except Exception as e:
-            print("⚠️ News API error:", e)
+            print("NewsData Error:", e)
 
-        # ------------------ Step 4️⃣ Sentiment Adjustment ------------------
+        # --- 2️⃣ GNews Check ---
         try:
-            sentiment = TextBlob(headline_clean).sentiment.polarity
-            if sentiment < -0.5:
-                total_conf -= 0.1
-        except Exception:
-            pass
+            url = f"https://gnews.io/api/v4/search?q={headline_clean}&token={GNEWS_API_KEY}&lang=en"
+            res = requests.get(url, timeout=20).json()
+            if res.get("articles"):
+                add_confidence(0.8, "GNews")
+            else:
+                add_confidence(0.4, "GNews (not found)")
+        except Exception as e:
+            print("GNews Error:", e)
 
-        # ------------------ Step 5️⃣ Final Verdict ------------------
-        avg_conf = round(total_conf / max(found_count, 1), 2)
-        unique_sources = list(set(all_sources))
-        unique_links = list(set(all_links))
+        # --- 3️⃣ Google Fact Check ---
+        try:
+            fc_url = f"https://factchecktools.googleapis.com/v1alpha1/claims:search?query={headline_clean}&key={GOOGLE_FACTCHECK_KEY}"
+            res = requests.get(fc_url, timeout=20).json()
+            claims = res.get("claims", [])
+            if claims:
+                claim = claims[0]
+                review = claim.get("claimReview", [{}])[0]
+                rating = review.get("textualRating", "Unknown")
+                if "true" in rating.lower():
+                    add_confidence(0.9, "Google FactCheck (True)")
+                elif "false" in rating.lower():
+                    add_confidence(0.2, "Google FactCheck (False)")
+                else:
+                    add_confidence(0.5, "Google FactCheck (Uncertain)")
+            else:
+                add_confidence(0.4, "Google FactCheck (not found)")
+        except Exception as e:
+            print("Google FactCheck Error:", e)
 
+        # --- 4️⃣ MongoDB Search ---
+        try:
+            matches = list(news_collection.find({"title": {"$regex": headline_clean, "$options": "i"}}))
+            if matches:
+                add_confidence(0.8, "Local MongoDB")
+            else:
+                add_confidence(0.4, "Local MongoDB (not found)")
+        except Exception as e:
+            print("MongoDB Error:", e)
+
+        # --- 5️⃣ ML Model Prediction ---
+        try:
+            text_vec = vectorizer.transform([headline_clean])
+            pred = model.predict(text_vec)[0]
+            proba = model.predict_proba(text_vec)[0].max()
+            if pred.lower() == "real":
+                add_confidence(0.8 * proba, "ML Model (Real)")
+            else:
+                add_confidence(0.3 * (1 - proba), "ML Model (Fake)")
+        except Exception as e:
+            print("ML Model Error:", e)
+
+        # --- Combine Results ---
+        avg_conf = total_confidence / max(found_count, 1)
         if avg_conf >= 0.7:
             final_rating = "True"
-        elif avg_conf <= 0.3:
+        elif avg_conf <= 0.4:
             final_rating = "Fake"
         else:
             final_rating = "Uncertain"
@@ -527,16 +505,16 @@ async def verify_news(headline: str = Form(...)):
         return {
             "status": "success",
             "headline": headline_clean,
-            "verified": final_rating == "True",
-            "confidence": avg_conf,
             "rating": final_rating,
-            "credible_sources": unique_sources,
-            "links": unique_links,
-            "timestamp": datetime.utcnow().isoformat(),
+            "confidence": round(avg_conf, 2),
+            "sources_checked": found_sources,
+            "verified": final_rating == "True",
+            "message": f"Verified across {found_count} sources. Result: {final_rating}"
         }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error verifying news: {str(e)}")
+        
 # ---------------- Traveller Updates (Local DB only) ----------------
 @news_router.get("/traveller-updates")
 def traveller_updates(location: str = Query(..., description="City or country name")):
