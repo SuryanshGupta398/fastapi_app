@@ -30,6 +30,7 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 # ---------------- Load environment ----------------
 NEWSDATA_API_KEY = os.getenv("NEWSDATA_API_KEY")
 CRON_SECRET = os.getenv("CRON_SECRET")
+GNEWS_API_KEY = os.getenv("GNEWS_API_KEY")
 
 # ---------------- ML model paths ----------------
 MODEL_PATH = "full_news_model.pkl"
