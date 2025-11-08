@@ -13,10 +13,6 @@ from sklearn.linear_model import SGDClassifier
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics import accuracy_score
 from sklearn.preprocessing import LabelEncoder
-from sentence_transformers import SentenceTransformer, util
-from textblob import TextBlob
-
-semantic_model = SentenceTransformer('all-MiniLM-L6-v2')
 
 # ---------------- Local imports ----------------
 from configuration import collection, news_collection
@@ -466,21 +462,7 @@ async def verify_news_advanced(headline: str = Form(...)):
                 local_hits.extend(list(cursor))
 
             # 🧠 Semantic check for top local results
-            if local_hits:
-                query_vec = semantic_model.encode(headline_clean, convert_to_tensor=True)
-                scores = []
-                for n in local_hits:
-                    doc_text = f"{n.get('title', '')} {n.get('description', '')}"
-                    doc_vec = semantic_model.encode(doc_text, convert_to_tensor=True)
-                    sim = util.cos_sim(query_vec, doc_vec).item()
-                    scores.append(sim)
-                best_score = max(scores) if scores else 0.0
-
-                # 🧠 Sentiment polarity check
-                user_sent = TextBlob(headline_clean).sentiment.polarity
-                top_hit = local_hits[np.argmax(scores)]
-                hit_sent = TextBlob(top_hit.get("title", "")).sentiment.polarity
-                opposite_meaning = abs(user_sent - hit_sent) > 0.5
+            
 
                 if best_score > 0.65 and not opposite_meaning:
                     total_confidence += 0.8
