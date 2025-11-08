@@ -13,6 +13,10 @@ from sklearn.linear_model import SGDClassifier
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics import accuracy_score
 from sklearn.preprocessing import LabelEncoder
+from sentence_transformers import SentenceTransformer, util
+from textblob import TextBlob
+
+semantic_model = SentenceTransformer('all-MiniLM-L6-v2')
 
 # ---------------- Local imports ----------------
 from configuration import collection, news_collection
@@ -399,14 +403,13 @@ def get_smart_trending_news(limit: int = 100):
 
 # ---------------- Verify News Route (Google Fact Check API) ----------------
 # ---------------- Verify News Route (Integrated: Google Fact Check + Local DB) ----------------
-@news_router.post("/verify-news")
 async def verify_news_advanced(headline: str = Form(...)):
     """
     Enhanced verification combining:
     1️⃣ Google Fact Check
     2️⃣ Local MongoDB News
-    3️⃣ NewsAPI (real-time articles)
-    with contextual confidence & threshold classification.
+    3️⃣ NewsAPI (real-time credible)
+    4️⃣ Semantic meaning understanding
     """
     try:
         GOOGLE_KEY = os.getenv("GOOGLE_FACTCHECK_KEY")
@@ -421,13 +424,7 @@ async def verify_news_advanced(headline: str = Form(...)):
 
         import re
         words = [w for w in re.findall(r"\w+", headline_clean.lower()) if len(w) > 2]
-        phrase_chunks = []
-        for i in range(0, len(words)):
-            phrase = " ".join(words[i:i+4])
-            if len(phrase.split()) >= 2:
-                phrase_chunks.append(phrase)
-        if not phrase_chunks:
-            phrase_chunks = [headline_clean]
+        phrase_chunks = [" ".join(words[i:i+4]) for i in range(len(words)-3)] or [headline_clean]
 
         all_sources, all_links = [], []
         total_confidence, found_count = 0.0, 0
@@ -468,13 +465,32 @@ async def verify_news_advanced(headline: str = Form(...)):
                 cursor = news_collection.find({"title": {"$regex": phrase, "$options": "i"}})
                 local_hits.extend(list(cursor))
 
-            for n in {n["url"]: n for n in local_hits if n.get("url")}.values():
-                src = n.get("source", "LocalDB")
-                all_sources.append(src)
-                all_links.append(n.get("url", ""))
-                total_confidence += 0.8
+            # 🧠 Semantic check for top local results
+            if local_hits:
+                query_vec = semantic_model.encode(headline_clean, convert_to_tensor=True)
+                scores = []
+                for n in local_hits:
+                    doc_text = f"{n.get('title', '')} {n.get('description', '')}"
+                    doc_vec = semantic_model.encode(doc_text, convert_to_tensor=True)
+                    sim = util.cos_sim(query_vec, doc_vec).item()
+                    scores.append(sim)
+                best_score = max(scores) if scores else 0.0
+
+                # 🧠 Sentiment polarity check
+                user_sent = TextBlob(headline_clean).sentiment.polarity
+                top_hit = local_hits[np.argmax(scores)]
+                hit_sent = TextBlob(top_hit.get("title", "")).sentiment.polarity
+                opposite_meaning = abs(user_sent - hit_sent) > 0.5
+
+                if best_score > 0.65 and not opposite_meaning:
+                    total_confidence += 0.8
+                    verified_status = True
+                elif opposite_meaning:
+                    total_confidence -= 0.3  # penalize contradictory meaning
+
+                all_sources.append(top_hit.get("source", "LocalDB"))
+                all_links.append(top_hit.get("url", ""))
                 found_count += 1
-                verified_status = True
         except Exception as e:
             print("⚠️ Local DB search error:", e)
 
@@ -491,11 +507,20 @@ async def verify_news_advanced(headline: str = Form(...)):
                 for a in data.get("articles", []):
                     link = a.get("url", "")
                     if any(domain in link for domain in credible_domains):
+                        # 🧠 Semantic similarity adjustment
+                        article_text = f"{a.get('title','')} {a.get('description','')}"
+                        sim_score = util.cos_sim(
+                            semantic_model.encode(headline_clean, convert_to_tensor=True),
+                            semantic_model.encode(article_text, convert_to_tensor=True)
+                        ).item()
+                        if sim_score > 0.65:
+                            total_confidence += 0.75
+                            verified_status = True
+                        elif sim_score < 0.4:
+                            total_confidence -= 0.2
                         all_sources.append(a["source"].get("name", ""))
                         all_links.append(link)
-                        total_confidence += 0.75
                         found_count += 1
-                        verified_status = True
         except Exception as e:
             print("⚠️ NewsAPI error:", e)
 
@@ -504,7 +529,6 @@ async def verify_news_advanced(headline: str = Form(...)):
         unique_sources = list(set([s for s in all_sources if s]))
         unique_links = list(set([l for l in all_links if l]))
 
-        # Confidence-based classification
         if avg_conf >= 0.7:
             final_rating = "True"
         elif avg_conf <= 0.3:
@@ -521,7 +545,7 @@ async def verify_news_advanced(headline: str = Form(...)):
             "rating": final_rating,
             "credible_sources": unique_sources,
             "links": unique_links,
-            "message": f"Verification completed with {final_rating} result."
+            "message": f"Verification completed with {final_rating} result (semantic-aware)."
         }
 
     except Exception as e:
