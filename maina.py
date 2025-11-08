@@ -13,6 +13,7 @@ from sklearn.linear_model import SGDClassifier
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics import accuracy_score
 from sklearn.preprocessing import LabelEncoder
+import asyncio
 
 # ---------------- Local imports ----------------
 from configuration import collection, news_collection
@@ -24,6 +25,7 @@ app = FastAPI()
 user_router = APIRouter(prefix="/users", tags=["Users"])
 news_router = APIRouter(prefix="/news", tags=["News"])
 report_router = APIRouter(prefix="/report", tags=["Report"])
+verify_router = APIRouter(prefix="/verify", tags=["Verify"])
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -32,81 +34,268 @@ NEWSDATA_API_KEY = os.getenv("NEWSDATA_API_KEY")
 CRON_SECRET = os.getenv("CRON_SECRET")
 GNEWS_API_KEY = os.getenv("GNEWS_API_KEY")
 
-# ---------------- ML model paths ----------------
-MODEL_PATH = "full_news_model.pkl"
-VECTORIZER_PATH = "full_tfidf_vectorizer.pkl"
-ENCODER_PATH = "label_encoder1.pkl"
-model = joblib.load("fake_news_model.pkl")
-vectorizer = joblib.load("tfidf_vectorizer.pkl")
+# ---------------- Load your trained models ----------------
+print("🚀 Loading your trained ML models...")
 
-# ---------------- Classes ----------------
-ALL_CLASSES = [
-    'Business', 'Crime', 'Entertainment', 'Food', 'Science',
-    'Sports', 'International', 'Other', 'Health', 'Politics'
-]
+try:
+    # Load your fake news detection model
+    fake_news_model = joblib.load("fake_news_model.pkl")
+    tfidf_vectorizer = joblib.load("tfidf_vectorizer.pkl")
+    print("✅ Fake news model loaded successfully!")
+except Exception as e:
+    print(f"⚠️ Error loading fake news model: {e}")
+    fake_news_model = None
+    tfidf_vectorizer = None
 
-print("✅ ML Model, Vectorizer & Encoder ready!")
+try:
+    # Load your category classification model
+    category_model = joblib.load("full_news_model.pkl")
+    category_vectorizer = joblib.load("full_tfidf_vectorizer.pkl")
+    category_encoder = joblib.load("label_encoder1.pkl")
+    print("✅ Category model loaded successfully!")
+except Exception as e:
+    print(f"⚠️ Error loading category model: {e}")
+    category_model = None
+    category_vectorizer = None
+    category_encoder = None
 
-# ---------------- Keyword overrides ----------------
-CATEGORY_KEYWORDS = {
-    "Business": ["company", "startup", "brand", "market", "investment", "IPO", "business", "deal", "corporate", "firm"],
-    "Sports": ["match", "tournament", "football", "cricket", "goal", "player", "league", "score"],
-    "Entertainment": ["movie", "film", "celebrity", "song", "album", "show", "series", "tv"],
-    "Food": ["restaurant", "recipe", "dish", "cuisine", "menu", "food", "chef"],
-    "Science": ["research", "experiment", "discovery", "scientist"],
-    "Health": ["disease", "medicine", "vaccine", "hospital", "covid", "health"],
-    "Politics": ["election", "government", "minister", "policy", "vote"]
-}
+# ---------------- News Verification Service ----------------
+class NewsVerificationService:
+    def __init__(self):
+        self.base_confidence = 0.5
+    
+    async def verify_news(self, news_text: str) -> dict:
+        """Main verification function that searches all sources"""
+        print(f"🔍 Verifying news: {news_text}")
+        
+        results = {
+            "newsdata": {"found": False, "articles": [], "confidence_impact": 0},
+            "gnews": {"found": False, "articles": [], "confidence_impact": 0},
+            "database": {"found": False, "articles": [], "confidence_impact": 0},
+            "ml_model": {"verdict": "UNCERTAIN", "confidence": 0.5, "confidence_impact": 0}
+        }
+        
+        # Run all verification checks concurrently
+        tasks = [
+            self._check_newsdata(news_text),
+            self._check_gnews(news_text),
+            self._check_database(news_text),
+            self._check_ml_model(news_text)
+        ]
+        
+        newsdata_result, gnews_result, db_result, ml_result = await asyncio.gather(*tasks)
+        
+        # Update results
+        results["newsdata"].update(newsdata_result)
+        results["gnews"].update(gnews_result)
+        results["database"].update(db_result)
+        results["ml_model"].update(ml_result)
+        
+        # Calculate final confidence
+        final_verdict, final_confidence = self._calculate_final_result(results)
+        
+        return {
+            "search_results": results,
+            "final_verdict": final_verdict,
+            "final_confidence": final_confidence
+        }
+    
+    async def _check_newsdata(self, news_text: str) -> dict:
+        """Check with NewsData.io API"""
+        try:
+            if not NEWSDATA_API_KEY:
+                return {"found": False, "articles": [], "confidence_impact": 0, "error": "API key missing"}
+            
+            url = "https://newsdata.io/api/1/news"
+            params = {
+                'apikey': NEWSDATA_API_KEY,
+                'q': news_text[:500],
+                'language': 'en',
+                'size': 5
+            }
+            
+            response = requests.get(url, params=params, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                articles = data.get('results', [])
+                
+                if articles:
+                    formatted_articles = []
+                    for article in articles:
+                        formatted_articles.append({
+                            'title': article.get('title', ''),
+                            'description': article.get('description', ''),
+                            'source': article.get('source_id', 'Unknown'),
+                            'url': article.get('link', ''),
+                            'published_at': article.get('pubDate', ''),
+                            'image_url': article.get('image_url', '')
+                        })
+                    
+                    return {
+                        "found": True,
+                        "articles": formatted_articles,
+                        "confidence_impact": 0.3,
+                        "count": len(articles)
+                    }
+            
+            return {"found": False, "articles": [], "confidence_impact": -0.2, "count": 0}
+            
+        except Exception as e:
+            print(f"NewsData API error: {e}")
+            return {"found": False, "articles": [], "confidence_impact": 0, "error": str(e)}
+    
+    async def _check_gnews(self, news_text: str) -> dict:
+        """Check with GNews API"""
+        try:
+            if not GNEWS_API_KEY:
+                return {"found": False, "articles": [], "confidence_impact": 0, "error": "API key missing"}
+            
+            url = "https://gnews.io/api/v4/search"
+            params = {
+                'q': f'"{news_text[:100]}"',
+                'token': GNEWS_API_KEY,
+                'lang': 'en',
+                'max': 5
+            }
+            
+            response = requests.get(url, params=params, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                articles = data.get('articles', [])
+                
+                if articles:
+                    formatted_articles = []
+                    for article in articles:
+                        formatted_articles.append({
+                            'title': article.get('title', ''),
+                            'description': article.get('description', ''),
+                            'source': article.get('source', {}).get('name', 'Unknown'),
+                            'url': article.get('url', ''),
+                            'published_at': article.get('publishedAt', ''),
+                            'image_url': article.get('image', '')
+                        })
+                    
+                    return {
+                        "found": True,
+                        "articles": formatted_articles,
+                        "confidence_impact": 0.25,
+                        "count": len(articles)
+                    }
+            
+            return {"found": False, "articles": [], "confidence_impact": -0.15, "count": 0}
+            
+        except Exception as e:
+            print(f"GNews API error: {e}")
+            return {"found": False, "articles": [], "confidence_impact": 0, "error": str(e)}
+    
+    async def _check_database(self, news_text: str) -> dict:
+        """Check with local MongoDB database"""
+        try:
+            # Search in news collection
+            query = {
+                "$or": [
+                    {"title": {"$regex": news_text, "$options": "i"}},
+                    {"description": {"$regex": news_text, "$options": "i"}}
+                ]
+            }
+            
+            articles = list(news_collection.find(query).limit(5))
+            
+            if articles:
+                formatted_articles = []
+                for article in articles:
+                    formatted_articles.append({
+                        'title': article.get('title', ''),
+                        'description': article.get('description', ''),
+                        'source': article.get('source', 'Local Database'),
+                        'url': article.get('url', ''),
+                        'published_at': article.get('publishedAt', ''),
+                        'category': article.get('category', 'Unknown'),
+                        'image_url': article.get('image', '')
+                    })
+                
+                return {
+                    "found": True,
+                    "articles": formatted_articles,
+                    "confidence_impact": 0.2,
+                    "count": len(articles)
+                }
+            
+            return {"found": False, "articles": [], "confidence_impact": -0.1, "count": 0}
+            
+        except Exception as e:
+            print(f"Database search error: {e}")
+            return {"found": False, "articles": [], "confidence_impact": 0, "error": str(e)}
+    
+    async def _check_ml_model(self, news_text: str) -> dict:
+        """Check with your trained ML model"""
+        try:
+            if fake_news_model is None or tfidf_vectorizer is None:
+                return {
+                    "verdict": "UNCERTAIN",
+                    "confidence": 0.5,
+                    "confidence_impact": 0,
+                    "error": "ML model not available"
+                }
+            
+            # Transform and predict
+            text_vector = tfidf_vectorizer.transform([news_text])
+            prediction = fake_news_model.predict(text_vector)[0]
+            probability = fake_news_model.predict_proba(text_vector)[0]
+            
+            # Adjust based on your model's labeling
+            if prediction == 1:  # Real
+                verdict = "REAL"
+                confidence = probability[1]
+                impact = confidence * 0.25
+            else:  # Fake
+                verdict = "FAKE"
+                confidence = probability[0]
+                impact = -confidence * 0.25
+            
+            return {
+                "verdict": verdict,
+                "confidence": float(confidence),
+                "confidence_impact": float(impact)
+            }
+            
+        except Exception as e:
+            print(f"ML model error: {e}")
+            return {
+                "verdict": "UNCERTAIN",
+                "confidence": 0.5,
+                "confidence_impact": 0,
+                "error": str(e)
+            }
+    
+    def _calculate_final_result(self, results: dict) -> tuple:
+        """Calculate final verdict and confidence"""
+        total_impact = 0
+        
+        # Sum all confidence impacts
+        total_impact += results["newsdata"]["confidence_impact"]
+        total_impact += results["gnews"]["confidence_impact"]
+        total_impact += results["database"]["confidence_impact"]
+        total_impact += results["ml_model"]["confidence_impact"]
+        
+        # Calculate final confidence
+        final_confidence = self.base_confidence + total_impact
+        final_confidence = max(0.0, min(1.0, final_confidence))
+        
+        # Determine verdict
+        if final_confidence >= 0.7:
+            verdict = "REAL"
+        elif final_confidence <= 0.3:
+            verdict = "FAKE"
+        else:
+            verdict = "UNCERTAIN"
+        
+        return verdict, round(final_confidence, 3)
 
-def categorize_with_keywords(text: str, predicted: str) -> str:
-    text_lower = text.lower()
-    for cat, keywords in CATEGORY_KEYWORDS.items():
-        for kw in keywords:
-            if kw in text_lower:
-                return cat
-    return predicted
-
-
-# ---------------- SAFE MODEL LOADING FIX ----------------
-model = None
-vectorizer = None
-label_encoder = None
-current_accuracy = 0.0
-
-def _safe_load_joblib(path, desc):
-    try:
-        obj = joblib.load(path)
-        print(f"✅ Loaded {desc} from {path}")
-        return obj
-    except FileNotFoundError:
-        print(f"⚠️ {desc} not found at {path}. Creating fallback.")
-    except Exception as e:
-        print(f"⚠️ Error loading {desc}: {e}")
-    return None
-
-# Load vectorizer
-vectorizer = _safe_load_joblib(VECTORIZER_PATH, "TF-IDF Vectorizer")
-if vectorizer is None:
-    from sklearn.feature_extraction.text import TfidfVectorizer
-    vectorizer = TfidfVectorizer(max_features=5000)
-    print("ℹ️ Created fallback TfidfVectorizer (unfitted).")
-
-# Load encoder
-label_encoder = _safe_load_joblib(ENCODER_PATH, "Label Encoder")
-if label_encoder is None:
-    label_encoder = LabelEncoder()
-    label_encoder.fit(ALL_CLASSES)
-    print("ℹ️ Fitted fallback LabelEncoder using ALL_CLASSES.")
-
-# Load model
-model = _safe_load_joblib(MODEL_PATH, "News Classifier Model")
-if model is None:
-    model = SGDClassifier(max_iter=1000, tol=1e-3)
-    print("ℹ️ Created fallback SGDClassifier model.")
-
-if not NEWSDATA_API_KEY:
-    print("⚠️ NEWSDATA_API_KEY not set. fetch_and_store_news() will fail if called.")
-
+# Initialize verification service
+news_verifier = NewsVerificationService()
 
 # ---------------- Request Models ----------------
 class ForgotPasswordRequest(BaseModel):
@@ -117,10 +306,20 @@ class ResetPasswordRequest(BaseModel):
     otp: str
     new_password: str
 
+class VerifyNewsRequest(BaseModel):
+    news_text: str
+
 # ---------------- Health Check ----------------
 @app.get("/health")
 def health_check():
-    return {"status": "ok", "time": datetime.utcnow().isoformat(), "model_accuracy": current_accuracy}
+    return {
+        "status": "ok", 
+        "time": datetime.utcnow().isoformat(),
+        "models_loaded": {
+            "fake_news_model": fake_news_model is not None,
+            "category_model": category_model is not None
+        }
+    }
 
 @app.head("/health")
 def health_check_head():
@@ -154,7 +353,7 @@ async def register_user(new_user: User, background_tasks: BackgroundTasks):
     user_dict["created_at"] = datetime.utcnow()
     resp = collection.insert_one(user_dict)
 
-    background_tasks.add_task(lambda: send_welcome_email(email, new_user.full_name))
+    background_tasks.add_task(send_welcome_email, email, new_user.full_name)
     return {"status": "success", "id": str(resp.inserted_id), "message": "User registered successfully"}
 
 @user_router.post("/signin")
@@ -181,7 +380,7 @@ async def forgot_password(request: ForgotPasswordRequest, background_tasks: Back
         raise HTTPException(status_code=404, detail="Email not registered")
     otp = str(random.randint(100000, 999999))
     otp_store[request.email.lower()] = {"otp": otp, "expires": datetime.utcnow() + timedelta(minutes=5)}
-    background_tasks.add_task(lambda: send_otp_email(request.email, otp))
+    background_tasks.add_task(send_otp_email, request.email, otp)
     return {"status": "success", "message": "OTP sent successfully"}
 
 @user_router.post("/reset-password")
@@ -199,498 +398,150 @@ async def reset_password(request: ResetPasswordRequest):
     del otp_store[request.email.lower()]
     return {"status": "success", "message": "Password reset successful"}
 
-# ---------------- Delete Account ----------------
-@user_router.delete("/delete-account")
-async def delete_account(email: EmailStr, password: str):
-    user = collection.find_one({"email": email.lower()})
-    if not user or not pwd_context.verify(password, user["password"]):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-    collection.delete_one({"email": email.lower()})
-    return {"status": "success", "message": "Account deleted successfully"}
-
-# ---------------- News Fetch & Train ----------------
-news_collection.create_index("url", unique=True)
-
-def remove_duplicates(articles):
-    """Remove duplicate articles by URL or similar title."""
-    seen_urls = set()
-    seen_titles = set()
-    unique_articles = []
-    for a in articles:
-        url = a.get("url", "")
-        title = a.get("title", "").lower().strip()
-        if not title:
-            continue
-        if url in seen_urls or title in seen_titles:
-            continue
-        seen_urls.add(url)
-        seen_titles.add(title)
-        unique_articles.append(a)
-    return unique_articles
-
-def fetch_and_store_news(lang="en", pages=2):
+# ---------------- NEWS VERIFICATION ROUTES ----------------
+@verify_router.post("/check-news")
+async def check_news_comprehensive(news_text: str = Form(..., description="Type the news you want to verify")):
     """
-    Fetch news from both NewsData.io and GNews, merge, deduplicate, and store.
-    """
-    NEWS_API_KEY = os.getenv("NEWSDATA_API_KEY")
-    GNEWS_API_KEY = os.getenv("GNEWS_API_KEY")
-    inserted_total = 0
-    X_new, y_new_str = [], []
-
-    all_articles = []
-
-    # ---------------- Fetch from NewsData.io ----------------
-    newsdata_url = f"https://newsdata.io/api/1/news?apikey={NEWS_API_KEY}&country=in&language={lang}"
-    page_count = 0
-    while newsdata_url and page_count < pages:
-        resp = requests.get(newsdata_url, timeout=50)
-        if resp.status_code != 200:
-            break
-        data = resp.json()
-        for a in data.get("results", []):
-            title = a.get("title", "")
-            if not title:
-                continue
-            desc = a.get("description", "") or ""
-            all_articles.append({
-                "title": title,
-                "description": desc[:150],
-                "url": a.get("link", ""),
-                "image": a.get("image_url", ""),
-                "publishedAt": a.get("pubDate", ""),
-                "language": lang,
-                "source": "NewsData.io"
-            })
-        next_page = data.get("nextPage")
-        if next_page:
-            newsdata_url = f"https://newsdata.io/api/1/news?apikey={NEWS_API_KEY}&country=in&language={lang}&page={next_page}"
-            page_count += 1
-        else:
-            break
-
-    # ---------------- Fetch from GNews ----------------
-    try:
-        gnews_url = f"https://gnews.io/api/v4/top-headlines?lang={lang}&country=in&max=50&apikey={GNEWS_API_KEY}"
-        g_resp = requests.get(gnews_url, timeout=50)
-        if g_resp.status_code == 200:
-            g_data = g_resp.json()
-            for a in g_data.get("articles", []):
-                all_articles.append({
-                    "title": a.get("title", ""),
-                    "description": (a.get("description") or "")[:150],
-                    "url": a.get("url", ""),
-                    "image": a.get("image", ""),
-                    "publishedAt": a.get("publishedAt", ""),
-                    "language": lang,
-                    "source": "GNews"
-                })
-    except Exception as e:
-        print("⚠️ Error fetching from GNews:", e)
-
-    # ---------------- Deduplicate ----------------
-    unique_articles = remove_duplicates(all_articles)
-    print(f"🧩 Combined {len(all_articles)} articles → {len(unique_articles)} unique after deduplication")
-
-    # ---------------- Store in DB ----------------
-    for a in unique_articles:
-        title = a["title"]
-        X_vec = vectorizer.transform([title])
-        y_pred = model.predict(X_vec)
-        category = label_encoder.inverse_transform(y_pred)[0]
-        category = categorize_with_keywords(title, category)
-        doc = {
-            **a,
-            "category": category,
-            "createdAt": datetime.utcnow()
-        }
-        try:
-            news_collection.insert_one(doc)
-            inserted_total += 1
-            X_new.append(title)
-            y_new_str.append(category)
-        except Exception as e:
-            if "duplicate key" not in str(e).lower():
-                print("⚠️ Insert error:", e)
-
-    print(f"[{lang}] ✅ Inserted {inserted_total} new articles after deduplication")
-
-    # ---------------- Retrain model ----------------
-    if X_new:
-        X_vec_new = vectorizer.transform(X_new)
-        y_new_int = label_encoder.transform(y_new_str)
-        all_classes_int = np.arange(len(label_encoder.classes_))
-        model.partial_fit(X_vec_new, y_new_int, classes=all_classes_int)
-        joblib.dump(model, MODEL_PATH)
-        print(f"🤖 Model improved with {len(X_new)} new samples!")
-
-# ---------------- News Routes ----------------
-@news_router.get("/")
-def get_news(language: str = "en", limit: int = 20):
-    news = list(news_collection.find({"language": language}).sort("createdAt", -1).limit(limit))
-    for n in news:
-        n["_id"] = str(n["_id"])
-    return {"articles": news}
-
-@news_router.get("/category/{category}")
-def get_news_by_category(category: str, language: str = "en", limit: int = 50):
-    news = list(news_collection.find({"category": category, "language": language}).sort("createdAt", -1).limit(limit))
-    for n in news:
-        n["_id"] = str(n["_id"])
-    return {"count": len(news), "articles": news}
-
-@news_router.get("/all")
-def get_all_news():
-    news = list(news_collection.find().sort("createdAt", -1))
-    for n in news:
-        n["_id"] = str(n["_id"])
-    return {"count": len(news), "articles": news}
-
-@news_router.get("/refresh")
-def refresh_news(secret: str = Query(...)):
-    if secret != CRON_SECRET:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
-    fetch_and_store_news("en")
-    fetch_and_store_news("hi")
-
-    news_docs = list(news_collection.find({"category": {"$exists": True}}))
-    if news_docs:
-        X_test = [doc["title"] for doc in news_docs]
-        y_true_str = [doc["category"] for doc in news_docs]
-        X_vec = vectorizer.transform(X_test)
-        y_true_int = label_encoder.transform(y_true_str)
-        y_pred_int = model.predict(X_vec)
-        accuracy = round(accuracy_score(y_true_int, y_pred_int) * 100, 2)
-    else:
-        accuracy = 0.0
-
-    global current_accuracy
-    current_accuracy = accuracy
-
-    return {"status": "success", "message": "News fetched & model improved", "accuracy": accuracy}
-
-TRENDING_KEYWORDS = [
-    "breaking", "exclusive", "update", "live", "urgent", "just in", "latest", "alert"
-]
-
-@news_router.get("/trending-smart")
-def get_smart_trending_news(limit: int = 100):
-    try:
-        now = datetime.utcnow()
-        last_7_days = now - timedelta(days=7)
-        recent_news = list(news_collection.find({"createdAt": {"$gte": last_7_days}}).limit(300))
-
-        trending = []
-        for n in recent_news:
-            views = n.get("views", 0)
-            title = n.get("title", "").lower()
-            created_at = n.get("createdAt", now)
-            hours_old = (now - created_at).total_seconds() / 3600
-
-            recency_boost = max(0, int(168 - hours_old)) // 8
-            keyword_boost = 20 if any(kw in title for kw in TRENDING_KEYWORDS) else 0
-            score = (views * 2.5) + keyword_boost + recency_boost
-
-            n["trending_score"] = score
-            n["_id"] = str(n["_id"])
-            trending.append(n)
-
-        trending = sorted(trending, key=lambda x: x["trending_score"], reverse=True)[:limit]
-        return {"status": "success", "count": len(trending), "articles": trending}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching smart trending news: {str(e)}")
-
-# ---------------- Verify News Route (Google Fact Check API) ----------------
-# ---------------- Verify News Route (Integrated: Google Fact Check + Local DB) ----------------
-def predict_news(headline: str):
-    """Predict using trained ML model."""
-    try:
-        if not isinstance(headline, str):
-            headline = str(headline)
-        text = headline.lower().strip()
-        vector = vectorizer.transform([text])
-        pred = ml_model.predict(vector)
-        prob = ml_model.predict_proba(vector).max()
-        return pred[0], float(prob)
-    except Exception as e:
-        print("⚠️ ML prediction error:", e)
-        return "uncertain", 0.5
-
-
-@news_router.post("/verify-news")
-async def verify_news(headline: str = Form(...)):
-    """
-    Verify headline using:
-    1️⃣ GNews API
-    2️⃣ NewsData.io API
-    3️⃣ MongoDB (local DB)
-    4️⃣ Trained ML Model
+    MAIN ENDPOINT: User types news and it searches ALL APIs and databases
     """
     try:
-        GNEWS_API_KEY = os.getenv("GNEWS_API_KEY")
-        NEWSDATA_API_KEY = os.getenv("NEWSDATA_API_KEY")
-
-        if not headline.strip():
-            raise HTTPException(status_code=400, detail="Headline cannot be empty")
-
-        headline_clean = headline.strip()
-        total_confidence = 0.0
-        found_sources = []
-        found_count = 0
-
-        # --- 🔹 1. GNews API ---
-        try:
-            gnews_url = f"https://gnews.io/api/v4/search?q={headline_clean}&token={GNEWS_API_KEY}&lang=en"
-            g_res = requests.get(gnews_url, timeout=20).json()
-            articles = g_res.get("articles", [])
-            if articles:
-                found_count += 1
-                total_confidence += 0.75
-                found_sources.append("GNews")
-        except Exception as e:
-            print("⚠️ GNews error:", e)
-
-        # --- 🔹 2. NewsData.io ---
-        try:
-            nd_url = f"https://newsdata.io/api/1/news?apikey={NEWSDATA_API_KEY}&q={headline_clean}&language=en"
-            nd_res = requests.get(nd_url, timeout=20).json()
-            results = nd_res.get("results", [])
-            if results:
-                found_count += 1
-                total_confidence += 0.75
-                found_sources.append("NewsData.io")
-        except Exception as e:
-            print("⚠️ NewsData.io error:", e)
-
-        # --- 🔹 3. MongoDB local database check ---
-        try:
-            query = {"title": {"$regex": headline_clean, "$options": "i"}}
-            local_news = list(news_collection.find(query))
-            if local_news:
-                found_count += 1
-                total_confidence += 0.8
-                found_sources.append("LocalDB")
-        except Exception as e:
-            print("⚠️ MongoDB check error:", e)
-
-        # --- 🔹 4. ML Model prediction ---
-        try:
-            ml_pred, ml_conf = predict_news(headline_clean)
-            if ml_pred == "REAL":
-                total_confidence += ml_conf
-            elif ml_pred == "FAKE":
-                total_confidence -= ml_conf / 2
-            found_count += 1
-            found_sources.append("ML Model")
-        except Exception as e:
-            print("⚠️ ML Model error:", e)
-
-        # --- 🔹 Calculate final confidence ---
-        avg_conf = round(total_confidence / max(found_count, 1), 2)
-
-        if avg_conf >= 0.7:
-            final_rating = "True"
-        elif avg_conf <= 0.3:
-            final_rating = "Fake"
-        else:
-            final_rating = "Uncertain"
-
-        return {
-            "status": "success",
-            "headline": headline_clean,
-            "confidence": avg_conf,
-            "rating": final_rating,
-            "sources_checked": found_sources,
-            "message": f"✅ Verified using {len(found_sources)} sources. Result: {final_rating}"
-        }
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error verifying news: {str(e)}")
+        if not news_text.strip():
+            raise HTTPException(status_code=400, detail="News text cannot be empty")
         
-# ---------------- Traveller Updates (Local DB only) ----------------
-@news_router.get("/traveller-updates")
-def traveller_updates(location: str = Query(..., description="City or country name")):
-    """
-    Fetches travel-related news for travellers based on the given location
-    from the existing MongoDB (news_collection). No external API used.
-    """
+        print(f"🎯 User submitted news for verification: {news_text}")
+        
+        # Verify news using all sources
+        verification_result = await news_verifier.verify_news(news_text.strip())
+        
+        # Prepare response
+        response = {
+            "status": "success",
+            "user_input": news_text,
+            "final_verdict": verification_result["final_verdict"],
+            "confidence_score": verification_result["final_confidence"],
+            "sources_checked": {
+                "newsdata_api": verification_result["search_results"]["newsdata"]["found"],
+                "gnews_api": verification_result["search_results"]["gnews"]["found"],
+                "local_database": verification_result["search_results"]["database"]["found"],
+                "ml_model": True
+            },
+            "detailed_results": {
+                "newsdata_api": {
+                    "found": verification_result["search_results"]["newsdata"]["found"],
+                    "articles_count": verification_result["search_results"]["newsdata"]["count"],
+                    "sample_articles": verification_result["search_results"]["newsdata"]["articles"][:2]
+                },
+                "gnews_api": {
+                    "found": verification_result["search_results"]["gnews"]["found"],
+                    "articles_count": verification_result["search_results"]["gnews"]["count"],
+                    "sample_articles": verification_result["search_results"]["gnews"]["articles"][:2]
+                },
+                "local_database": {
+                    "found": verification_result["search_results"]["database"]["found"],
+                    "articles_count": verification_result["search_results"]["database"]["count"],
+                    "sample_articles": verification_result["search_results"]["database"]["articles"][:2]
+                },
+                "ml_analysis": {
+                    "verdict": verification_result["search_results"]["ml_model"]["verdict"],
+                    "confidence": verification_result["search_results"]["ml_model"]["confidence"]
+                }
+            },
+            "confidence_breakdown": {
+                "base_score": 0.5,
+                "newsdata_impact": verification_result["search_results"]["newsdata"]["confidence_impact"],
+                "gnews_impact": verification_result["search_results"]["gnews"]["confidence_impact"],
+                "database_impact": verification_result["search_results"]["database"]["confidence_impact"],
+                "ml_model_impact": verification_result["search_results"]["ml_model"]["confidence_impact"],
+                "total_impact": sum([
+                    verification_result["search_results"]["newsdata"]["confidence_impact"],
+                    verification_result["search_results"]["gnews"]["confidence_impact"],
+                    verification_result["search_results"]["database"]["confidence_impact"],
+                    verification_result["search_results"]["ml_model"]["confidence_impact"]
+                ])
+            },
+            "verdict_explanation": get_verdict_explanation(verification_result),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+        return response
+        
+    except Exception as e:
+        print(f"Error in check_news_comprehensive: {e}")
+        raise HTTPException(status_code=500, detail=f"News verification failed: {str(e)}")
+
+def get_verdict_explanation(verification_result: dict) -> str:
+    """Generate human-readable explanation"""
+    verdict = verification_result["final_verdict"]
+    confidence = verification_result["final_confidence"]
+    results = verification_result["search_results"]
+    
+    sources_found = []
+    if results["newsdata"]["found"]:
+        sources_found.append("NewsData")
+    if results["gnews"]["found"]:
+        sources_found.append("GNews")
+    if results["database"]["found"]:
+        sources_found.append("Local Database")
+    
+    if verdict == "REAL":
+        if confidence >= 0.8:
+            return f"✅ HIGHLY CREDIBLE: This news appears authentic and was verified across {len(sources_found)} sources including {', '.join(sources_found)}. The ML model also confirms its authenticity with high confidence."
+        else:
+            return f"✅ LIKELY REAL: This news appears credible based on verification from {len(sources_found)} sources. The ML analysis supports this conclusion."
+    
+    elif verdict == "FAKE":
+        if confidence <= 0.2:
+            return f"❌ HIGHLY SUSPICIOUS: This news was not found in credible sources and shows patterns consistent with misinformation. ML analysis strongly indicates fake content."
+        else:
+            return f"❌ LIKELY FAKE: Limited verification from credible sources. The news shows characteristics of unreliable content according to our ML model."
+    
+    else:  # UNCERTAIN
+        return f"⚠️ UNCERTAIN: We need more information to verify this news. It was found in {len(sources_found)} sources. Please check multiple reliable sources before sharing."
+
+# ---------------- Batch Verification ----------------
+@verify_router.post("/check-multiple-news")
+async def check_multiple_news(
+    news_items: list[str] = Form(..., description="List of news items to verify")
+):
+    """Verify multiple news items at once"""
     try:
-        # Find local travel news matching the location
-        travel_keywords = ["travel", "tourism", "flight", "airport", "visa", "trip", "hotel", "journey", "holiday"]
-        regex_filter = {"$regex": "|".join(travel_keywords), "$options": "i"}
-
-        cursor = news_collection.find({
-            "$and": [
-                {"$or": [{"title": regex_filter}, {"description": regex_filter}, {"category": {"$regex": "travel", "$options": "i"}}]},
-                {"title": {"$regex": location, "$options": "i"}}
-            ]
-        }).sort("createdAt", -1)
-
-        results = list(cursor)
-        for n in results:
-            n["_id"] = str(n["_id"])
-
-        if not results:
-            return {
-                "status": "not_found",
-                "location": location,
-                "verified": False,
-                "confidence": 0.4,
-                "count": 0,
-                "travel_news": [],
-                "message": f"No travel updates found for '{location}' in local database."
-            }
-
-        # If found, compute confidence & credibility
-        credible_sources = list({n.get("source", "LocalDB") for n in results if n.get("source")})
-        avg_confidence = 0.9 if len(results) > 3 else 0.7
-
+        results = []
+        for news_text in news_items:
+            if news_text.strip():
+                result = await check_news_comprehensive(news_text)
+                results.append({
+                    "news_text": news_text,
+                    "verdict": result["final_verdict"],
+                    "confidence": result["confidence_score"],
+                    "sources_found": sum([
+                        1 for source in result["sources_checked"].values() 
+                        if source is True
+                    ])
+                })
+        
         return {
             "status": "success",
-            "location": location,
-            "verified": True,
-            "confidence": avg_confidence,
-            "count": len(results),
-            "credible_sources": credible_sources,
-            "travel_news": results,
-            "message": f"Fetched {len(results)} travel updates for '{location}' from local DB."
+            "total_checked": len(results),
+            "results": results
         }
-
+        
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching traveller updates: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Batch verification failed: {str(e)}")
 
-# ---------------- Travel Route Updates ----------------
-@news_router.get("/travel-route-updates")
-def travel_route_updates(
-    source: str = Query(..., description="Source city name"),
-    destination: str = Query(..., description="Destination city name")
-):
-    """
-    Returns travel-related and route-specific verified news between source and destination cities.
-    Fetches from local MongoDB only (no external API).
-    """
-
-    try:
-        # 1️⃣ List of major route points (you can expand or auto-fetch from API)
-        route_points = {
-            "kanpur": ["Etawah", "Firozabad", "Agra", "Mathura", "Noida", "Delhi"],
-            "mumbai": ["Surat", "Vadodara", "Udaipur", "Jaipur", "Gurugram", "Delhi"],
-            "lucknow": ["Kanpur", "Agra", "Noida", "Delhi"]
-        }
-
-        src = source.lower()
-        dest = destination.lower()
-
-        # Get in-between points if exist
-        route_cities = route_points.get(src, []) if dest in route_points.get(src, []) else []
-        route_cities = [src, *route_cities, dest] if route_cities else [src, dest]
-
-        # 2️⃣ Travel-related keywords
-        travel_keywords = ["travel", "train", "flight", "road", "traffic", "weather", "tourism", "airport", "bus", "expressway"]
-
-        regex_filter = {"$regex": "|".join(travel_keywords), "$options": "i"}
-        location_filter = {"$regex": "|".join(route_cities), "$options": "i"}
-
-        # 3️⃣ Query MongoDB
-        cursor = news_collection.find({
-            "$and": [
-                {"$or": [
-                    {"title": regex_filter},
-                    {"description": regex_filter},
-                    {"category": {"$regex": "travel", "$options": "i"}}
-                ]},
-                {"$or": [
-                    {"title": location_filter},
-                    {"description": location_filter},
-                    {"location": location_filter}
-                ]}
-            ]
-        }).sort("createdAt", -1)
-
-        results = list(cursor)
-        for r in results:
-            r["_id"] = str(r["_id"])
-
-        if not results:
-            return {
-                "status": "not_found",
-                "route": f"{source} → {destination}",
-                "verified": False,
-                "confidence": 0.4,
-                "count": 0,
-                "travel_news": [],
-                "message": f"No travel updates found for the route {source} → {destination}."
-            }
-
-        # 4️⃣ Compute confidence & credible sources
-        credible_sources = list({n.get("source", "LocalDB") for n in results if n.get("source")})
-        confidence = 0.85 if len(results) > 3 else 0.7
-
-        return {
-            "status": "success",
-            "route": f"{source} → {destination}",
-            "verified": True,
-            "confidence": confidence,
-            "count": len(results),
-            "credible_sources": credible_sources,
-            "travel_news": results,
-            "message": f"Fetched {len(results)} verified travel updates for route {source} → {destination}."
-        }
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching route travel updates: {str(e)}")
-
-# ---------------- Report Route ----------------
-@report_router.post("/misinformation")
-async def report_misinformation(
-    email: str = Form(...),
-    link: str = Form(""),
-    reason: str = Form(...),
-    proof: UploadFile = File(None)
-):
-    try:
-        attachment_path = None
-        if proof:
-            attachment_path = f"temp_{proof.filename}"
-            with open(attachment_path, "wb") as f:
-                f.write(await proof.read())
-
-        subject_admin = "🚨 New Misinformation Report"
-        body_admin = f"""
-        <h2>New Misinformation Report</h2>
-        <p><b>Reporter Email:</b> {email}</p>
-        <p><b>News Link:</b> {link or 'No link provided'}</p>
-        <p><b>Reason:</b> {reason}</p>
-        <p><i>🕓 Reported at: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC</i></p>
-        """
-
-        send_email(
-            to_email=os.getenv("MAIL_USERNAME"),
-            subject=subject_admin,
-            body=body_admin,
-            attachment_path=attachment_path
-        )
-
-        subject_user = "✅ Thanks for Reporting Misinformation!"
-        body_user = f"""
-        <h3>Hi there,</h3>
-        <p>Thank you for helping us fight misinformation!</p>
-        <p>We’ll review your report and take appropriate action.</p>
-        <br>
-        <p>— The Fake News Detector Team</p>
-        """
-
-        send_email(to_email=email, subject=subject_user, body=body_user)
-
-        if attachment_path and os.path.exists(attachment_path):
-            os.remove(attachment_path)
-
-        return {"status": "success", "message": "Report submitted successfully"}
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing report: {str(e)}")
+# ---------------- JSON API Endpoint ----------------
+@verify_router.post("/check-news-json")
+async def check_news_json(request: VerifyNewsRequest):
+    """JSON version of news verification"""
+    return await check_news_comprehensive(request.news_text)
 
 # ---------------- Register Routers ----------------
 app.include_router(user_router)
 app.include_router(news_router)
 app.include_router(report_router)
+app.include_router(verify_router)
+
+print("✅ Fake News Detector Backend Started Successfully!")
+print("📡 Available Verification Endpoints:")
+print("   POST /verify/check-news          - Main endpoint (Form data)")
+print("   POST /verify/check-news-json     - JSON API endpoint")
+print("   POST /verify/check-multiple-news - Batch verification")
