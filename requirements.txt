@@ -1,30 +1,39 @@
 # --- Core Backend ---
-fastapi==0.115.0
-uvicorn==0.30.0
-pymongo==4.10.1
-pydantic[email]==2.9.2
-python-dotenv==1.0.1
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pymongo==4.6.1
+pydantic[email]==2.5.0
+python-dotenv==1.0.0
 passlib[bcrypt]==1.7.4
-bcrypt==3.2.2
+bcrypt==4.0.1
 python-jose[cryptography]==3.3.0
-python-multipart==0.0.9
-apscheduler==3.10.4
-requests==2.32.3
-packaging==24.1
-email-validator==2.2.0
+python-multipart==0.0.6
 
-# --- Google Fact Check & Auth ---
-google-api-python-client==2.100.0
-google-auth==2.23.0
-google-auth-oauthlib==1.0.0
-google-auth-httplib2==0.1.0
+# --- Database & Async ---
+motor==3.3.2
+aiohttp==3.9.1
+httpx==0.25.2
 
-# --- Machine Learning (fake news detection) ---
+# --- Machine Learning (Lightweight) ---
+scikit-learn==1.3.2
 pandas==2.1.4
-nltk==3.9.1
-scikit-learn==1.7.2
-joblib==1.4.2
+numpy==1.25.2
+joblib==1.3.2
+nltk==3.8.1
 textblob==0.17.1
 
-# --- Optional performance boosts ---
-tqdm==4.66.5
+# --- Semantic Analysis (Railway Compatible) ---
+spacy==3.7.2
+https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.0/en_core_web_sm-3.7.0.tar.gz
+transformers==4.35.2
+torch==2.1.1 --index-url https://download.pytorch.org/whl/cpu
+sentence-transformers==2.2.2
+
+# --- Utilities ---
+requests==2.31.0
+apscheduler==3.10.4
+python-dateutil==2.8.2
+typing-extensions==4.8.0
+
+# --- Optional (Lightweight) ---
+tqdm==4.66.1
