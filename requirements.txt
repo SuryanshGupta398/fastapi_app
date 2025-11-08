@@ -15,10 +15,9 @@ email-validator==2.2.0
 
 # --- Semantic & Text Understanding ---
 sentence-transformers==2.2.2
-torch==2.5.1+cpu 
---extra-index-url https://download.pytorch.org/whl/cpu
+huggingface_hub==0.10.1          # ✅ Compatible version (fixes cached_download error)
+transformers==4.30.2             # ✅ Stable version for sentence-transformers
 textblob==0.17.1
-transformers==4.43.2
 numpy==1.26.4
 
 # --- Google Fact Check & Auth ---
@@ -32,3 +31,6 @@ pandas==2.1.4
 nltk==3.9.1
 scikit-learn==1.5.1
 joblib==1.4.2
+
+# --- Optional performance boosts ---
+tqdm==4.66.5
