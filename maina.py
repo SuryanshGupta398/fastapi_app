@@ -563,9 +563,8 @@ async def reset_password(request: ResetPasswordRequest):
     return {"status": "success", "message": "Password reset successful"}
 
 # ---------------- NEWS VERIFICATION ROUTES ----------------
+
 @verify_router.post("/check-news")
-async def check_news_comprehensive(news_text: str = Form(..., description="Type the news you want to verify")):
- @verify_router.post("/check-news")
 async def check_news_comprehensive(news_text: str = Form(..., description="Type the news you want to verify")):
     """
     MAIN ENDPOINT: User types news and it searches ALL APIs and databases for current AND historical news
