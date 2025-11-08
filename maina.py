@@ -35,6 +35,8 @@ CRON_SECRET = os.getenv("CRON_SECRET")
 MODEL_PATH = "full_news_model.pkl"
 VECTORIZER_PATH = "full_tfidf_vectorizer.pkl"
 ENCODER_PATH = "label_encoder1.pkl"
+model = joblib.load("fake_news_model.pkl")
+vectorizer = joblib.load("tfidf_vectorizer.pkl")
 
 # ---------------- Classes ----------------
 ALL_CLASSES = [
@@ -399,117 +401,115 @@ def get_smart_trending_news(limit: int = 100):
 
 # ---------------- Verify News Route (Google Fact Check API) ----------------
 # ---------------- Verify News Route (Integrated: Google Fact Check + Local DB) ----------------
+@news_router.post("/verify-news")
 async def verify_news_advanced(headline: str = Form(...)):
     """
     Enhanced verification combining:
-    1️⃣ Google Fact Check
-    2️⃣ Local MongoDB News
-    3️⃣ NewsAPI (real-time credible)
-    4️⃣ Semantic meaning understanding
+    1️⃣ Google Fact Check API
+    2️⃣ Local ML fake-news model
+    3️⃣ Sentiment polarity + meaning comparison
+    4️⃣ Credible News APIs (GNews / NewsData)
     """
-    try:
-        GOOGLE_KEY = os.getenv("GOOGLE_FACTCHECK_KEY")
-        NEWS_API_KEY = os.getenv("NEWSDATA_API_KEY")
 
-        if not GOOGLE_KEY or not NEWS_API_KEY:
+    try:
+        if not GOOGLE_KEY or not NEWSDATA_KEY:
             raise HTTPException(status_code=500, detail="API keys not configured properly.")
 
         headline_clean = headline.strip()
         if not headline_clean:
             raise HTTPException(status_code=400, detail="Headline cannot be empty")
 
-        import re
-        words = [w for w in re.findall(r"\w+", headline_clean.lower()) if len(w) > 2]
-        phrase_chunks = [" ".join(words[i:i+4]) for i in range(len(words)-3)] or [headline_clean]
-
+        # ----------------------------
+        # Step 1️⃣ Google Fact Check
+        # ----------------------------
+        google_confidence = 0.0
         all_sources, all_links = [], []
-        total_confidence, found_count = 0.0, 0
+        total_conf, found_count = 0.0, 0
         verified_status = False
 
-        # --- 🔹 Step 1: Google Fact Check ---
-        google_confidence = 0.0
         try:
             google_url = f"https://factchecktools.googleapis.com/v1alpha1/claims:search?query={headline_clean}&key={GOOGLE_KEY}"
-            g_res = requests.get(google_url, timeout=30)
-            g_data = g_res.json() if g_res.status_code == 200 else {}
-            claims = g_data.get("claims", [])
-            if claims:
-                claim = claims[0]
-                review = claim.get("claimReview", [{}])[0]
-                rating = review.get("textualRating", "Unknown")
-                publisher = review.get("publisher", {}).get("name", "Unknown Source")
-                link = review.get("url", "")
-                google_confidence = (
-                    0.9 if "true" in rating.lower() else
-                    0.6 if "partly" in rating.lower() else
-                    0.2 if "false" in rating.lower() else
-                    0.5
-                )
-                verdict = True if "true" in rating.lower() else False
-                all_sources.append(publisher)
-                all_links.append(link)
-                total_confidence += google_confidence
-                found_count += 1
-                verified_status = verified_status or verdict
+            g_res = requests.get(google_url, timeout=25)
+            if g_res.ok:
+                g_data = g_res.json()
+                claims = g_data.get("claims", [])
+                if claims:
+                    claim = claims[0]
+                    review = claim.get("claimReview", [{}])[0]
+                    rating = review.get("textualRating", "Unknown")
+                    publisher = review.get("publisher", {}).get("name", "Unknown Source")
+                    link = review.get("url", "")
+                    google_confidence = (
+                        0.9 if "true" in rating.lower() else
+                        0.6 if "partly" in rating.lower() else
+                        0.2 if "false" in rating.lower() else
+                        0.5
+                    )
+                    verdict = True if "true" in rating.lower() else False
+                    verified_status = verified_status or verdict
+                    total_conf += google_confidence
+                    found_count += 1
+                    all_sources.append(publisher)
+                    all_links.append(link)
         except Exception as e:
-            print("⚠️ Google FactCheck error:", e)
+            print("⚠️ Google Fact Check error:", e)
 
-        # --- 🔹 Step 2: Local DB search ---
+        # ----------------------------
+        # Step 2️⃣ Local ML Model Check
+        # ----------------------------
         try:
-            local_hits = []
-            for phrase in phrase_chunks:
-                cursor = news_collection.find({"title": {"$regex": phrase, "$options": "i"}})
-                local_hits.extend(list(cursor))
+            tfidf_vec = vectorizer.transform([headline_clean])
+            prediction = model.predict(tfidf_vec)[0]
+            prob = model.predict_proba(tfidf_vec)[0][prediction]
+            local_confidence = float(prob)
+            verified_status = verified_status or bool(prediction)
+            total_conf += local_confidence
+            found_count += 1
+        except Exception as e:
+            print("⚠️ Local ML model check error:", e)
 
-            # 🧠 Semantic check for top local results
-            
+        # ----------------------------
+        # Step 3️⃣ Credible News Sources
+        # ----------------------------
+        try:
+            url = f"https://newsdata.io/api/1/news?apikey={NEWSDATA_KEY}&q={headline_clean}&language=en"
+            res = requests.get(url, timeout=25)
+            if res.ok:
+                data = res.json().get("results", [])
+                credible_sources = [
+                    "bbc", "reuters", "thehindu", "ndtv",
+                    "hindustantimes", "cnn", "timesofindia", "apnews"
+                ]
+                credible_hits = [
+                    art for art in data if any(src in (art.get("link", "").lower()) for src in credible_sources)
+                ]
 
-                if best_score > 0.65 and not opposite_meaning:
-                    total_confidence += 0.8
+                if credible_hits:
+                    total_conf += 0.8
+                    found_count += 1
                     verified_status = True
-                elif opposite_meaning:
-                    total_confidence -= 0.3  # penalize contradictory meaning
-
-                all_sources.append(top_hit.get("source", "LocalDB"))
-                all_links.append(top_hit.get("url", ""))
-                found_count += 1
+                    all_sources.extend([a.get("source_id", "Unknown") for a in credible_hits])
+                    all_links.extend([a.get("link", "") for a in credible_hits])
         except Exception as e:
-            print("⚠️ Local DB search error:", e)
+            print("⚠️ NewsData error:", e)
 
-        # --- 🔹 Step 3: NewsAPI credible sources ---
+        # ----------------------------
+        # Step 4️⃣ Sentiment Consistency Check
+        # ----------------------------
         try:
-            credible_domains = [
-                "bbc.com", "reuters.com", "indiatimes.com", "ndtv.com",
-                "thehindu.com", "hindustantimes.com", "cnn.com", "apnews.com"
-            ]
-            for phrase in phrase_chunks:
-                url = f"https://newsapi.org/v2/everything?q={phrase}&apiKey={NEWS_API_KEY}&language=en"
-                res = requests.get(url, timeout=20)
-                data = res.json()
-                for a in data.get("articles", []):
-                    link = a.get("url", "")
-                    if any(domain in link for domain in credible_domains):
-                        # 🧠 Semantic similarity adjustment
-                        article_text = f"{a.get('title','')} {a.get('description','')}"
-                        sim_score = util.cos_sim(
-                            semantic_model.encode(headline_clean, convert_to_tensor=True),
-                            semantic_model.encode(article_text, convert_to_tensor=True)
-                        ).item()
-                        if sim_score > 0.65:
-                            total_confidence += 0.75
-                            verified_status = True
-                        elif sim_score < 0.4:
-                            total_confidence -= 0.2
-                        all_sources.append(a["source"].get("name", ""))
-                        all_links.append(link)
-                        found_count += 1
-        except Exception as e:
-            print("⚠️ NewsAPI error:", e)
+            sentiments = TextBlob(headline_clean).sentiment
+            polarity = sentiments.polarity
+            if polarity < -0.5:
+                total_conf -= 0.1  # penalize strong negative if unverified
+        except Exception:
+            pass
 
-        # --- 🔹 Step 4: Combine and classify ---
-        avg_conf = round(total_confidence / max(found_count, 1), 2)
-        unique_sources = list(set([s for s in all_sources if s]))
-        unique_links = list(set([l for l in all_links if l]))
+        # ----------------------------
+        # Step 5️⃣ Final Confidence + Verdict
+        # ----------------------------
+        avg_conf = round(total_conf / max(found_count, 1), 2)
+        unique_sources = list(set(all_sources))
+        unique_links = list(set(all_links))
 
         if avg_conf >= 0.7:
             final_rating = "True"
@@ -518,7 +518,6 @@ async def verify_news_advanced(headline: str = Form(...)):
         else:
             final_rating = "Uncertain"
 
-        # --- 🔹 Step 5: Response ---
         return {
             "status": "success",
             "headline": headline_clean,
@@ -527,7 +526,7 @@ async def verify_news_advanced(headline: str = Form(...)):
             "rating": final_rating,
             "credible_sources": unique_sources,
             "links": unique_links,
-            "message": f"Verification completed with {final_rating} result (semantic-aware)."
+            "timestamp": datetime.utcnow().isoformat(),
         }
 
     except Exception as e:
