@@ -403,111 +403,116 @@ def get_smart_trending_news(limit: int = 100):
 # ---------------- Verify News Route (Google Fact Check API) ----------------
 # ---------------- Verify News Route (Integrated: Google Fact Check + Local DB) ----------------
 @news_router.post("/verify-news")
-async def verify_news_advanced(headline: str = Form(...)):
+async def verify_news(headline: str = Form(...)):
     """
-    Enhanced verification combining:
+    Verify a news headline using:
     1️⃣ Google Fact Check API
     2️⃣ Local ML fake-news model
-    3️⃣ Sentiment polarity + meaning comparison
-    4️⃣ Credible News APIs (GNews / NewsData)
+    3️⃣ Credible news sources (NewsData.io + GNews)
+    4️⃣ Sentiment check
     """
 
     try:
-        if not GNEWS_API_KEY or not NEWSDATA_API_KEY:
+        # Validate API keys
+        GOOGLE_KEY = os.getenv("GOOGLE_FACTCHECK_KEY")
+        if not all([NEWSDATA_API_KEY, GNEWS_API_KEY, GOOGLE_KEY]):
             raise HTTPException(status_code=500, detail="API keys not configured properly.")
 
         headline_clean = headline.strip()
         if not headline_clean:
             raise HTTPException(status_code=400, detail="Headline cannot be empty")
 
-        # ----------------------------
-        # Step 1️⃣ Google Fact Check
-        # ----------------------------
-        google_confidence = 0.0
         all_sources, all_links = [], []
         total_conf, found_count = 0.0, 0
         verified_status = False
 
+        # ------------------ Step 1️⃣ Google Fact Check ------------------
         try:
             google_url = f"https://factchecktools.googleapis.com/v1alpha1/claims:search?query={headline_clean}&key={GOOGLE_KEY}"
-            g_res = requests.get(google_url, timeout=25)
+            g_res = requests.get(google_url, timeout=20)
             if g_res.ok:
                 g_data = g_res.json()
                 claims = g_data.get("claims", [])
                 if claims:
-                    claim = claims[0]
-                    review = claim.get("claimReview", [{}])[0]
+                    review = claims[0].get("claimReview", [{}])[0]
                     rating = review.get("textualRating", "Unknown")
                     publisher = review.get("publisher", {}).get("name", "Unknown Source")
                     link = review.get("url", "")
+
                     google_confidence = (
                         0.9 if "true" in rating.lower() else
                         0.6 if "partly" in rating.lower() else
                         0.2 if "false" in rating.lower() else
                         0.5
                     )
-                    verdict = True if "true" in rating.lower() else False
-                    verified_status = verified_status or verdict
+                    if "true" in rating.lower():
+                        verified_status = True
                     total_conf += google_confidence
                     found_count += 1
                     all_sources.append(publisher)
-                    all_links.append(link)
+                    if link:
+                        all_links.append(link)
         except Exception as e:
             print("⚠️ Google Fact Check error:", e)
 
-        # ----------------------------
-        # Step 2️⃣ Local ML Model Check
-        # ----------------------------
+        # ------------------ Step 2️⃣ Local ML Model ------------------
         try:
-            tfidf_vec = vectorizer.transform([headline_clean])
-            prediction = model.predict(tfidf_vec)[0]
-            prob = model.predict_proba(tfidf_vec)[0][prediction]
+            X_vec = vectorizer.transform([headline_clean])
+            pred = model.predict(X_vec)[0]
+            prob = model.predict_proba(X_vec)[0][pred]
             local_confidence = float(prob)
-            verified_status = verified_status or bool(prediction)
+            if pred == 1:
+                verified_status = True
             total_conf += local_confidence
             found_count += 1
         except Exception as e:
-            print("⚠️ Local ML model check error:", e)
+            print("⚠️ ML Model check error:", e)
 
-        # ----------------------------
-        # Step 3️⃣ Credible News Sources
-        # ----------------------------
+        # ------------------ Step 3️⃣ Credible News APIs ------------------
         try:
-            url = f"https://newsdata.io/api/1/news?apikey={NEWSDATA_KEY}&q={headline_clean}&language=en"
-            res = requests.get(url, timeout=25)
-            if res.ok:
-                data = res.json().get("results", [])
+            # NewsData.io
+            nd_url = f"https://newsdata.io/api/1/news?apikey={NEWSDATA_API_KEY}&q={headline_clean}&language=en"
+            nd_res = requests.get(nd_url, timeout=20)
+            if nd_res.ok:
+                nd_data = nd_res.json().get("results", [])
                 credible_sources = [
-                    "bbc", "reuters", "thehindu", "ndtv",
-                    "hindustantimes", "cnn", "timesofindia", "apnews"
+                    "bbc", "reuters", "ndtv", "cnn", "timesofindia",
+                    "hindustantimes", "thehindu", "apnews"
                 ]
                 credible_hits = [
-                    art for art in data if any(src in (art.get("link", "").lower()) for src in credible_sources)
+                    a for a in nd_data if any(src in a.get("link", "").lower() for src in credible_sources)
                 ]
-
                 if credible_hits:
                     total_conf += 0.8
                     found_count += 1
                     verified_status = True
-                    all_sources.extend([a.get("source_id", "Unknown") for a in credible_hits])
+                    all_sources.extend([a.get("source_id", "NewsData") for a in credible_hits])
                     all_links.extend([a.get("link", "") for a in credible_hits])
-        except Exception as e:
-            print("⚠️ NewsData error:", e)
 
-        # ----------------------------
-        # Step 4️⃣ Sentiment Consistency Check
-        # ----------------------------
+            # GNews
+            g_url = f"https://gnews.io/api/v4/search?q={headline_clean}&lang=en&country=in&max=10&apikey={GNEWS_API_KEY}"
+            g_res = requests.get(g_url, timeout=20)
+            if g_res.ok:
+                g_articles = g_res.json().get("articles", [])
+                if g_articles:
+                    total_conf += 0.7
+                    found_count += 1
+                    verified_status = True
+                    all_sources.extend([a.get("source", {}).get("name", "GNews") for a in g_articles])
+                    all_links.extend([a.get("url", "") for a in g_articles])
+
+        except Exception as e:
+            print("⚠️ News API error:", e)
+
+        # ------------------ Step 4️⃣ Sentiment Adjustment ------------------
         try:
-            sentiments = TextBlob(headline_clean).sentiment
-            polarity = sentiments.polarity
-            if polarity < -0.5:
-                total_conf -= 0.1  # penalize strong negative if unverified
+            sentiment = TextBlob(headline_clean).sentiment.polarity
+            if sentiment < -0.5:
+                total_conf -= 0.1
         except Exception:
             pass
 
-        # ----------------------------
-        # Step 5️⃣ Final Confidence + Verdict
-        # ----------------------------
+        # ------------------ Step 5️⃣ Final Verdict ------------------
         avg_conf = round(total_conf / max(found_count, 1), 2)
         unique_sources = list(set(all_sources))
         unique_links = list(set(all_links))
@@ -532,7 +537,6 @@ async def verify_news_advanced(headline: str = Form(...)):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error verifying news: {str(e)}")
-
 # ---------------- Traveller Updates (Local DB only) ----------------
 @news_router.get("/traveller-updates")
 def traveller_updates(location: str = Query(..., description="City or country name")):
