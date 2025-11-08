@@ -208,13 +208,39 @@ async def delete_account(email: EmailStr, password: str):
 # ---------------- News Fetch & Train ----------------
 news_collection.create_index("url", unique=True)
 
+def remove_duplicates(articles):
+    """Remove duplicate articles by URL or similar title."""
+    seen_urls = set()
+    seen_titles = set()
+    unique_articles = []
+    for a in articles:
+        url = a.get("url", "")
+        title = a.get("title", "").lower().strip()
+        if not title:
+            continue
+        if url in seen_urls or title in seen_titles:
+            continue
+        seen_urls.add(url)
+        seen_titles.add(title)
+        unique_articles.append(a)
+    return unique_articles
+
 def fetch_and_store_news(lang="en", pages=2):
-    url = f"https://newsdata.io/api/1/news?apikey={NEWSDATA_API_KEY}&country=in&language={lang}"
-    page_count, inserted_total = 0, 0
+    """
+    Fetch news from both NewsData.io and GNews, merge, deduplicate, and store.
+    """
+    NEWS_API_KEY = os.getenv("NEWSDATA_API_KEY")
+    GNEWS_API_KEY = os.getenv("GNEWS_API_KEY")
+    inserted_total = 0
     X_new, y_new_str = [], []
 
-    while url and page_count < pages:
-        resp = requests.get(url, timeout=50)
+    all_articles = []
+
+    # ---------------- Fetch from NewsData.io ----------------
+    newsdata_url = f"https://newsdata.io/api/1/news?apikey={NEWS_API_KEY}&country=in&language={lang}"
+    page_count = 0
+    while newsdata_url and page_count < pages:
+        resp = requests.get(newsdata_url, timeout=50)
         if resp.status_code != 200:
             break
         data = resp.json()
@@ -223,36 +249,69 @@ def fetch_and_store_news(lang="en", pages=2):
             if not title:
                 continue
             desc = a.get("description", "") or ""
-            X_vec = vectorizer.transform([title])
-            y_pred = model.predict(X_vec)
-            category = label_encoder.inverse_transform(y_pred)[0]
-            category = categorize_with_keywords(title, category)
-            doc = {
+            all_articles.append({
                 "title": title,
                 "description": desc[:150],
                 "url": a.get("link", ""),
                 "image": a.get("image_url", ""),
                 "publishedAt": a.get("pubDate", ""),
                 "language": lang,
-                "source": "NewsData.io",
-                "category": category,
-                "createdAt": datetime.utcnow()
-            }
-            try:
-                news_collection.insert_one(doc)
-                inserted_total += 1
-                X_new.append(title)
-                y_new_str.append(category)
-            except Exception as e:
-                if "duplicate key" not in str(e).lower():
-                    print("⚠️ Insert error:", e)
+                "source": "NewsData.io"
+            })
         next_page = data.get("nextPage")
         if next_page:
-            url = f"https://newsdata.io/api/1/news?apikey={NEWSDATA_API_KEY}&country=in&language={lang}&page={next_page}"
+            newsdata_url = f"https://newsdata.io/api/1/news?apikey={NEWS_API_KEY}&country=in&language={lang}&page={next_page}"
             page_count += 1
         else:
             break
-    print(f"[{lang}] ✅ Inserted {inserted_total} new articles")
+
+    # ---------------- Fetch from GNews ----------------
+    try:
+        gnews_url = f"https://gnews.io/api/v4/top-headlines?lang={lang}&country=in&max=50&apikey={GNEWS_API_KEY}"
+        g_resp = requests.get(gnews_url, timeout=50)
+        if g_resp.status_code == 200:
+            g_data = g_resp.json()
+            for a in g_data.get("articles", []):
+                all_articles.append({
+                    "title": a.get("title", ""),
+                    "description": (a.get("description") or "")[:150],
+                    "url": a.get("url", ""),
+                    "image": a.get("image", ""),
+                    "publishedAt": a.get("publishedAt", ""),
+                    "language": lang,
+                    "source": "GNews"
+                })
+    except Exception as e:
+        print("⚠️ Error fetching from GNews:", e)
+
+    # ---------------- Deduplicate ----------------
+    unique_articles = remove_duplicates(all_articles)
+    print(f"🧩 Combined {len(all_articles)} articles → {len(unique_articles)} unique after deduplication")
+
+    # ---------------- Store in DB ----------------
+    for a in unique_articles:
+        title = a["title"]
+        X_vec = vectorizer.transform([title])
+        y_pred = model.predict(X_vec)
+        category = label_encoder.inverse_transform(y_pred)[0]
+        category = categorize_with_keywords(title, category)
+        doc = {
+            **a,
+            "category": category,
+            "createdAt": datetime.utcnow()
+        }
+        try:
+            news_collection.insert_one(doc)
+            inserted_total += 1
+            X_new.append(title)
+            y_new_str.append(category)
+        except Exception as e:
+            if "duplicate key" not in str(e).lower():
+                print("⚠️ Insert error:", e)
+
+    print(f"[{lang}] ✅ Inserted {inserted_total} new articles after deduplication")
+
+    # ---------------- Retrain model ----------------
     if X_new:
         X_vec_new = vectorizer.transform(X_new)
         y_new_int = label_encoder.transform(y_new_str)
