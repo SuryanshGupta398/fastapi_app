@@ -13,13 +13,6 @@ requests==2.32.3
 packaging==24.1
 email-validator==2.2.0
 
-# --- Semantic & Text Understanding ---
-sentence-transformers==3.1.1
-transformers==4.43.3
-huggingface-hub==0.23.4       # ✅ compatible with both ST and Transformers
-textblob==0.17.1
-numpy==1.26.4
-
 # --- Google Fact Check & Auth ---
 google-api-python-client==2.100.0
 google-auth==2.23.0
