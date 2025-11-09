@@ -188,67 +188,78 @@ def ultra_fast_pattern_check(headline: str) -> dict:
     }
 
 def full_mongodb_check(headline: str) -> dict:
-    """Full MongoDB check with semantic word overlap (searches entire DB)"""
+    """Full MongoDB search with contradiction handling."""
     try:
-        # ✅ Get all news (limit to 500 for speed)
-        all_news = list(news_collection.find({}, {"title": 1, "url": 1, "source": 1}))
+        # Get all news from MongoDB
+        all_news = list(news_collection.find({}))  # search full DB
 
         if not all_news:
             return {"found": False, "count": 0}
 
+        # Opposite meaning pairs to detect contradictions
+        opposite_pairs = [
+            ("won", "lost"), ("victory", "defeat"), ("success", "failure"),
+            ("increase", "decrease"), ("rise", "fall"), ("true", "false"),
+            ("accept", "reject"), ("approve", "deny"), ("support", "oppose")
+        ]
+
+        def has_contradiction(a: str, b: str) -> bool:
+            a = a.lower()
+            b = b.lower()
+            for w1, w2 in opposite_pairs:
+                if (w1 in a and w2 in b) or (w2 in a and w1 in b):
+                    return True
+            return False
+
         matches = []
-        headline_lower = headline.lower()
-
-        # Define some opposite words to detect context differences
-        opposites = {
-            "won": "lost",
-            "lost": "won",
-            "increase": "decrease",
-            "decrease": "increase",
-            "rise": "fall",
-            "fall": "rise",
-            "victory": "defeat",
-            "defeat": "victory"
-        }
-
+        contradictions = []
         for news in all_news:
-            news_title = news.get("title", "").lower()
-            if not news_title:
+            title = news.get("title", "")
+            if not title:
                 continue
 
-            # Basic text similarity
-            similarity = simple_text_similarity(headline_lower, news_title)
+            similarity = simple_text_similarity(headline, title)
+            if similarity > 0.3:  # consider relevant
+                if has_contradiction(headline, title):
+                    contradictions.append({
+                        "title": title,
+                        "similarity": round(similarity, 2),
+                        "url": news.get("url", ""),
+                        "source": news.get("source", "Unknown")
+                    })
+                else:
+                    matches.append({
+                        "title": title,
+                        "similarity": round(similarity, 2),
+                        "url": news.get("url", ""),
+                        "source": news.get("source", "Unknown")
+                    })
 
-            # Detect opposite context (e.g., won vs lost)
-            for a, b in opposites.items():
-                if a in headline_lower and b in news_title:
-                    similarity -= 0.4  # reduce similarity if context flipped
-                elif b in headline_lower and a in news_title:
-                    similarity -= 0.4
-                    
-            penalty = contradiction_penalty(headline, news_title)
-            adjusted_similarity = similarity - penalty
-            if adjusted_similarity > 0.3:
-                matches.append({
-                    "title": news.get("title", ""),
-                    "similarity": round(adjusted_similarity, 2),
-                    "url": news.get("url", ""),
-                    "source": news.get("source", "Unknown"),
-                    "penalty": penalty
-                })
-
-        # Sort and pick top 5
+        # Sort by similarity
         matches.sort(key=lambda x: x["similarity"], reverse=True)
-        top_matches = matches[:5]
+        contradictions.sort(key=lambda x: x["similarity"], reverse=True)
+
+        if contradictions:
+            rating = "Fake"
+            reason = "Contradictory to verified articles"
+        elif matches:
+            rating = "True"
+            reason = "Similar verified articles found"
+        else:
+            rating = "Uncertain"
+            reason = "No matching or opposing articles found"
 
         return {
-            "found": len(top_matches) > 0,
-            "count": len(top_matches),
-            "matches": top_matches
+            "found": bool(matches or contradictions),
+            "count": len(matches) + len(contradictions),
+            "matches": matches[:3],
+            "contradictions": contradictions[:3],
+            "rating": rating,
+            "reason": reason
         }
 
     except Exception as e:
-        print(f"⚠️ MongoDB full search error: {e}")
+        print(f"MongoDB check error: {e}")
         return {"found": False, "count": 0}
 
 def fast_gnews_check(headline: str) -> dict:
