@@ -10,16 +10,10 @@ joblib==1.4.2
 packaging==24.1
 
 # --- Text & Semantic Understanding ---
-sentence-transformers==2.2.2
-torch==2.5.1+cpu 
---extra-index-url https://download.pytorch.org/whl/cpu
-textblob==0.17.1
 numpy==1.26.4
 scikit-learn==1.7.2
 pandas==2.1.4
 nltk==3.9.1
-
-huggingface_hub==0.19.4
 
 # --- Auth & Security ---
 python-jose[cryptography]==3.3.0
