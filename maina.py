@@ -614,13 +614,9 @@ def get_smart_trending_news(limit: int = 100):
 @news_router.post("/verify-news")
 async def verify_news_refined(headline: str = Form(...)):
     """
-    ⚡ Smart lightweight verification (MongoDB + GNews + text understanding)
-    Handles opposites like 'won' vs 'lost', 'increase' vs 'decrease'.
+    ⚡ Smart verification with proper contradiction detection
     """
     try:
-        import re
-        from datetime import datetime
-
         headline_clean = headline.strip().lower()
         if not headline_clean:
             raise HTTPException(status_code=400, detail="Headline required")
@@ -628,48 +624,62 @@ async def verify_news_refined(headline: str = Form(...)):
         CONTRADICTION_PAIRS = [
             ("won", "lost"), ("victory", "defeat"), ("increase", "decrease"),
             ("rise", "fall"), ("approve", "reject"), ("alive", "dead"),
-            ("true", "false"), ("success", "failure"), ("gain", "loss")
+            ("true", "false"), ("success", "failure"), ("gain", "loss"),
+            ("win", "lose"), ("positive", "negative"), ("good", "bad"),
+            ("profit", "loss"), ("growth", "decline"), ("support", "oppose")
         ]
 
-        # 1️⃣ Search entire MongoDB
+        # 1️⃣ Search MongoDB with better contradiction detection
         news_cursor = news_collection.find({})
-        matches = []
+        supporting_matches = []
         contradictory_matches = []
+        
+        headline_words = set(headline_clean.split())
 
         for news in news_cursor:
             title = news.get("title", "").lower()
             if not title:
                 continue
 
-            # Word overlap similarity
-            words_head = set(headline_clean.split())
-            words_title = set(title.split())
-            common = words_head.intersection(words_title)
-            similarity = len(common) / max(len(words_head), len(words_title))
+            title_words = set(title.split())
+            
+            # Calculate similarity based on common words
+            common_words = headline_words.intersection(title_words)
+            similarity = len(common_words) / max(len(headline_words), len(title_words))
 
-            # Detect contradictions
-            contradiction = False
-            for a, b in CONTRADICTION_PAIRS:
-                if (a in headline_clean and b in title) or (b in headline_clean and a in title):
-                    contradiction = True
-                    break
+            # Check for contradictions - only if similarity is decent
+            if similarity > 0.2:  # At least some overlap
+                has_contradiction = False
+                
+                for word1, word2 in CONTRADICTION_PAIRS:
+                    # Headline has word1 but news has word2 = CONTRADICTION
+                    if (word1 in headline_clean and word2 in title):
+                        has_contradiction = True
+                        break
+                    # Headline has word2 but news has word1 = CONTRADICTION  
+                    elif (word2 in headline_clean and word1 in title):
+                        has_contradiction = True
+                        break
 
-            if contradiction:
-                contradictory_matches.append({
-                    "title": news.get("title", ""),
-                    "url": news.get("url", ""),
-                    "source": news.get("source", "Unknown"),
-                    "similarity": round(similarity, 2)
-                })
-            elif similarity > 0.3:
-                matches.append({
-                    "title": news.get("title", ""),
-                    "url": news.get("url", ""),
-                    "source": news.get("source", "Unknown"),
-                    "similarity": round(similarity, 2)
-                })
+                if has_contradiction:
+                    contradictory_matches.append({
+                        "title": news.get("title", ""),
+                        "url": news.get("url", ""),
+                        "source": news.get("source", "Unknown"),
+                        "similarity": round(similarity, 2),
+                        "contradiction": True
+                    })
+                else:
+                    # This is a supporting match (similar but no contradiction)
+                    supporting_matches.append({
+                        "title": news.get("title", ""),
+                        "url": news.get("url", ""),
+                        "source": news.get("source", "Unknown"),
+                        "similarity": round(similarity, 2),
+                        "contradiction": False
+                    })
 
-        # 2️⃣ Check external GNews (optional)
+        # 2️⃣ Check external GNews
         GNEWS_API_KEY = os.getenv("GNEWS_API_KEY")
         gnews_articles = []
         if GNEWS_API_KEY:
@@ -687,45 +697,78 @@ async def verify_news_refined(headline: str = Form(...)):
             except Exception as e:
                 print("⚠️ GNews error:", e)
 
-        # 3️⃣ Compute confidence
-        total_found = len(matches)
-        total_contradict = len(contradictory_matches)
+        # 3️⃣ SMART CONFIDENCE CALCULATION
+        supporting_count = len(supporting_matches)
+        contradictory_count = len(contradictory_matches)
+        external_count = len(gnews_articles)
 
-        if total_contradict > 0:
+        # Decision logic
+        if contradictory_count > 0 and supporting_count == 0:
+            # Only contradictions found = FAKE
             rating = "Fake"
-            confidence = 0.9
-        elif total_found > 0:
+            confidence = min(0.7 + (contradictory_count * 0.1), 0.95)
+            reason = f"Found {contradictory_count} contradictory news articles"
+            
+        elif supporting_count > 0 and contradictory_count == 0:
+            # Only supporting evidence found = TRUE
             rating = "True"
-            confidence = 0.8 + min(total_found * 0.05, 0.15)
-        elif gnews_articles:
+            confidence = min(0.6 + (supporting_count * 0.08) + (external_count * 0.05), 0.95)
+            reason = f"Found {supporting_count} supporting news articles"
+            
+        elif supporting_count > 0 and contradictory_count > 0:
+            # Mixed evidence = UNCERTAIN
+            if supporting_count > contradictory_count:
+                rating = "Likely True"
+                confidence = 0.6
+                reason = f"More supporting ({supporting_count}) than contradictory ({contradictory_count}) evidence"
+            elif contradictory_count > supporting_count:
+                rating = "Likely Fake" 
+                confidence = 0.6
+                reason = f"More contradictory ({contradictory_count}) than supporting ({supporting_count}) evidence"
+            else:
+                rating = "Conflicting"
+                confidence = 0.5
+                reason = "Equal supporting and contradictory evidence"
+                
+        elif external_count > 0:
+            # Only external sources = LIKELY TRUE
             rating = "Likely True"
             confidence = 0.7
+            reason = f"Found {external_count} external news sources"
+            
         else:
+            # No evidence = UNCERTAIN
             rating = "Uncertain"
-            confidence = 0.5
+            confidence = 0.3
+            reason = "No supporting or contradictory evidence found"
 
         # 4️⃣ Combine all evidence
-        all_sources = list({m["source"] for m in matches + contradictory_matches + gnews_articles if m.get("source")})
-        all_links = list({m["url"] for m in matches + contradictory_matches + gnews_articles if m.get("url")})
+        all_sources = list({m["source"] for m in supporting_matches + contradictory_matches + gnews_articles if m.get("source")})
+        all_links = list({m["url"] for m in supporting_matches + contradictory_matches + gnews_articles if m.get("url")})
 
         return {
             "status": "success",
             "headline": headline,
             "rating": rating,
             "confidence": round(confidence, 2),
-            "found_in_db": total_found,
-            "contradictions": total_contradict,
+            "reason": reason,
+            "evidence_breakdown": {
+                "supporting_matches": supporting_count,
+                "contradictory_matches": contradictory_count, 
+                "external_sources": external_count,
+                "total_sources": len(all_sources)
+            },
+            "supporting_evidence": supporting_matches[:5],  # Top 5 matches
+            "contradictory_evidence": contradictory_matches[:5],  # Top 5 contradictions
+            "external_evidence": gnews_articles,
             "credible_sources": all_sources,
             "links": all_links,
-            "db_matches": matches,
-            "contradictory_evidence": contradictory_matches,
-            "gnews_articles": gnews_articles,
-            "message": f"News classified as {rating} ({confidence*100:.0f}% confidence)"
+            "message": f"Analysis: {rating} ({confidence*100:.0f}% confidence) - {reason}"
         }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Verification error: {str(e)}")
-
+        
 # ---------------- Traveller Updates (Local DB only) ----------------
 @news_router.get("/traveller-updates")
 def traveller_updates(location: str = Query(..., description="City or country name")):
