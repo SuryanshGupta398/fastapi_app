@@ -631,10 +631,31 @@ async def verify_news_comprehensive(headline: str = Form(...)):
         confidence_factors = [pattern_result["confidence"]]
         
         # MongoDB influence
+        # if mongodb_result.get("found"):
+        #     db_boost = 0.15 + (mongodb_result["count"] * 0.05)
+        #     confidence_factors.append(min(pattern_result["confidence"] + db_boost, 0.9))
+        # MongoDB influence (context-aware)
         if mongodb_result.get("found"):
-            db_boost = 0.15 + (mongodb_result["count"] * 0.05)
-            confidence_factors.append(min(pattern_result["confidence"] + db_boost, 0.9))
-        
+    # Check if any opposite meaning article found
+            opposites = {"won": "lost", "lost": "won", "victory": "defeat", "defeat": "victory"}
+            headline_lower = headline.lower()
+            contradictory_match = False
+            
+            for match in mongodb_result.get("matches", []):
+                title_lower = match["title"].lower()
+                for a, b in opposites.items():
+                    if (a in headline_lower and b in title_lower) or (b in headline_lower and a in title_lower):
+                        contradictory_match = True
+                        break
+
+            if contradictory_match:
+        # If contradiction found, reduce confidence instead of boosting
+                db_boost = -0.2
+            else:
+                db_boost = 0.15 + (mongodb_result["count"] * 0.05)
+            
+            confidence_factors.append(min(max(pattern_result["confidence"] + db_boost, 0.1), 0.9))
+
         # External news influence
         if gnews_result.get("found"):
             external_boost = 0.2 + (gnews_result["count"] * 0.08)
