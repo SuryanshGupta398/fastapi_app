@@ -103,6 +103,19 @@ TRUSTED_DOMAINS = [
     "theprint.in", "republicworld.com", "dnaindia.com"
 ]
 
+def contradiction_penalty(headline1: str, headline2: str) -> float:
+    """Reduce confidence if contradictory keywords are found."""
+    opposites = [
+        ("won", "lost"), ("victory", "defeat"), ("success", "failure"),
+        ("increase", "decrease"), ("rise", "fall"), ("true", "false"),
+        ("accept", "reject"), ("approve", "deny"), ("support", "oppose")
+    ]
+    h1 = headline1.lower()
+    h2 = headline2.lower()
+    for a, b in opposites:
+        if (a in h1 and b in h2) or (b in h1 and a in h2):
+            return 0.3  # 30% penalty
+    return 0.0
 
 def simple_text_similarity(text1, text2):
     """Simple word overlap similarity"""
@@ -212,13 +225,16 @@ def full_mongodb_check(headline: str) -> dict:
                     similarity -= 0.4  # reduce similarity if context flipped
                 elif b in headline_lower and a in news_title:
                     similarity -= 0.4
-
-            if similarity > 0.25:
+                    
+            penalty = contradiction_penalty(headline, news_title)
+            adjusted_similarity = similarity - penalty
+            if adjusted_similarity > 0.3:
                 matches.append({
                     "title": news.get("title", ""),
-                    "similarity": round(similarity, 2),
+                    "similarity": round(adjusted_similarity, 2),
                     "url": news.get("url", ""),
-                    "source": news.get("source", "Unknown")
+                    "source": news.get("source", "Unknown"),
+                    "penalty": penalty
                 })
 
         # Sort and pick top 5
