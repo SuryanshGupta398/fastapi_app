@@ -96,9 +96,13 @@ CREDIBLE_INDICATORS = [
 ]
 
 TRUSTED_DOMAINS = [
-    "reuters.com", "ap.org", "bbc.com", "bbc.co.uk", "aljazeera.com",
-    "nytimes.com", "washingtonpost.com", "theguardian.com"
+    "timesofindia.com", "hindustantimes.com", "indiatoday.in",
+    "ndtv.com", "thehindu.com", "indianexpress.com",
+    "news18.com", "livemint.com", "economictimes.indiatimes.com",
+    "business-standard.com", "deccanherald.com", "scroll.in",
+    "theprint.in", "republicworld.com", "dnaindia.com"
 ]
+
 
 def simple_text_similarity(text1, text2):
     """Simple word overlap similarity"""
@@ -174,7 +178,7 @@ def full_mongodb_check(headline: str) -> dict:
     """Full MongoDB check with semantic word overlap (searches entire DB)"""
     try:
         # ✅ Get all news (limit to 500 for speed)
-        all_news = list(news_collection.find({}, {"title": 1, "url": 1, "source": 1}).limit(500))
+        all_news = list(news_collection.find({}, {"title": 1, "url": 1, "source": 1}))
 
         if not all_news:
             return {"found": False, "count": 0}
