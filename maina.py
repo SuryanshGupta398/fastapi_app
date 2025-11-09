@@ -211,9 +211,9 @@ def full_mongodb_check(headline: str) -> dict:
             # Step 2: Detect opposite meaning (won vs lost)
             for a, b in opposites.items():
                 if a in headline_lower and b in news_lower:
-                    similarity -= 0.4
+                    similarity -= 1.0
                 elif b in headline_lower and a in news_lower:
-                    similarity -= 0.4
+                    similarity -= 1.0
 
             # Step 3: Adjust threshold and store matches
             if similarity > 0.25:
