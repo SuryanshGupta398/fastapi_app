@@ -1,13 +1,10 @@
 import os
 import requests
-import pandas as pd
-from datetime import datetime, timedelta
-import random
 import re
-from fastapi import FastAPI, APIRouter, HTTPException, BackgroundTasks, Query, UploadFile, File, Form
+from datetime import datetime, timedelta
+from fastapi import FastAPI, APIRouter, HTTPException, Form
 from pydantic import BaseModel, EmailStr
 from passlib.context import CryptContext
-from fastapi.concurrency import run_in_threadpool
 
 # ---------------- Local imports ----------------
 from configuration import collection, news_collection
@@ -25,9 +22,9 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 NEWSDATA_API_KEY = os.getenv("NEWSDATA_API_KEY")
 CRON_SECRET = os.getenv("CRON_SECRET")
 
-print("✅ Ultra-lightweight Fake News Detector Ready!")
+print("✅ Lightweight Fake News Detector Ready!")
 
-# ---------------- ULTRA-FAST PATTERN MATCHING (No ML) ----------------
+# ---------------- PATTERN MATCHING (No ML) ----------------
 
 FAKE_NEWS_PATTERNS = [
     # Clickbait patterns
@@ -63,7 +60,7 @@ TRUSTED_DOMAINS = [
 ]
 
 def simple_text_similarity(text1, text2):
-    """Simple word overlap similarity (no ML)"""
+    """Simple word overlap similarity"""
     words1 = set(text1.lower().split())
     words2 = set(text2.lower().split())
     
@@ -74,33 +71,26 @@ def simple_text_similarity(text1, text2):
     return len(common) / max(len(words1), len(words2))
 
 def ultra_fast_pattern_check(headline: str) -> dict:
-    """Ultra-fast pattern matching - pure Python, no dependencies"""
-    start_time = datetime.utcnow()
+    """Ultra-fast pattern matching"""
     headline_lower = headline.lower().strip()
     
     # Check for fake news patterns
     fake_score = 0
-    detected_patterns = []
     for pattern in FAKE_NEWS_PATTERNS:
         if re.search(pattern, headline_lower):
             fake_score += 1
-            detected_patterns.append(pattern)
     
     # Check for credible indicators
     credible_score = 0
-    credible_sources = []
     for indicator in CREDIBLE_INDICATORS:
         if indicator in headline_lower:
             credible_score += 1
-            credible_sources.append(indicator)
     
-    # Text analysis (simple)
+    # Text analysis
     words = headline.split()
     word_count = len(words)
     has_caps = any(word.isupper() for word in words if len(word) > 3)
     has_exclamation = '!' in headline
-    has_question = '?' in headline
-    has_numbers = any(char.isdigit() for char in headline)
     
     # Calculate confidence
     if fake_score >= 2:
@@ -129,28 +119,14 @@ def ultra_fast_pattern_check(headline: str) -> dict:
         confidence = max(confidence - 0.2, 0.1)
         if rating != "Fake":
             rating = "Sensational"
-        reason = "Uses sensational language (caps + exclamation)"
-    
-    # Adjust for length (too short might be incomplete)
-    if word_count < 5:
-        confidence = max(confidence - 0.1, 0.1)
-        reason = "Very short headline - insufficient information"
-    
-    response_time = (datetime.utcnow() - start_time).total_seconds()
+        reason = "Uses sensational language"
     
     return {
         "rating": rating,
         "confidence": round(confidence, 2),
         "reason": reason,
-        "analysis": {
-            "fake_patterns_found": fake_score,
-            "credible_indicators": credible_score,
-            "word_count": word_count,
-            "has_exclamation": has_exclamation,
-            "has_all_caps": has_caps,
-            "has_numbers": has_numbers
-        },
-        "response_time": round(response_time, 4)
+        "fake_patterns": fake_score,
+        "credible_indicators": credible_score
     }
 
 def fast_mongodb_check(headline: str) -> dict:
@@ -169,8 +145,6 @@ def fast_mongodb_check(headline: str) -> dict:
         
         # Simple similarity matching
         matches = []
-        headline_lower = headline.lower()
-        
         for news in recent_news:
             news_title = news.get("title", "").lower()
             if not news_title:
@@ -183,8 +157,7 @@ def fast_mongodb_check(headline: str) -> dict:
                     "title": news.get("title", ""),
                     "similarity": round(similarity, 2),
                     "url": news.get("url", ""),
-                    "source": news.get("source", "Unknown"),
-                    "category": news.get("category", "Unknown")
+                    "source": news.get("source", "Unknown")
                 })
         
         # Sort by similarity and take top 3
@@ -194,8 +167,7 @@ def fast_mongodb_check(headline: str) -> dict:
         return {
             "found": len(top_matches) > 0,
             "count": len(top_matches),
-            "matches": top_matches,
-            "sources": list(set(m["source"] for m in top_matches))
+            "matches": top_matches
         }
         
     except Exception as e:
@@ -241,97 +213,8 @@ def fast_gnews_check(headline: str) -> dict:
     except Exception as e:
         return {"error": str(e)}
 
-# ---------------- LIGHTNING-FAST VERIFICATION ROUTES ----------------
-
-@news_router.post("/verify-news-instant")
-async def verify_news_instant(headline: str = Form(...)):
-    """
-    ⚡ INSTANT verification - pattern matching only
-    Response time: < 0.001 seconds
-    No external calls, pure Python
-    """
-    try:
-        headline = headline.strip()
-        if not headline:
-            raise HTTPException(status_code=400, detail="Headline required")
-
-        result = ultra_fast_pattern_check(headline)
-        
-        return {
-            "status": "success",
-            "verified": result["rating"] in ["True", "Likely True"],
-            "headline": headline,
-            "rating": result["rating"],
-            "confidence": result["confidence"],
-            "reason": result["reason"],
-            "response_time_seconds": result["response_time"],
-            "method": "pattern_matching",
-            "message": f"Instant analysis: {result['rating']} ({result['confidence']*100}% confidence)"
-        }
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Instant verification error: {str(e)}")
-
-@news_router.post("/verify-news-fast")
-async def verify_news_fast(headline: str = Form(...)):
-    """
-    🚀 FAST verification - pattern + simple DB matching
-    Response time: 1-3 seconds
-    """
-    start_time = datetime.utcnow()
-    
-    try:
-        headline = headline.strip()
-        if not headline:
-            raise HTTPException(status_code=400, detail="Headline required")
-
-        # Step 1: Instant pattern check
-        pattern_result = ultra_fast_pattern_check(headline)
-        
-        # Step 2: Quick MongoDB check
-        mongodb_result = fast_mongodb_check(headline)
-        
-        # Step 3: Calculate combined confidence
-        base_confidence = pattern_result["confidence"]
-        final_confidence = base_confidence
-        final_rating = pattern_result["rating"]
-        
-        # Boost confidence if MongoDB finds matches
-        if mongodb_result.get("found"):
-            match_boost = min(0.2 + (mongodb_result["count"] * 0.1), 0.4)
-            final_confidence = min(base_confidence + match_boost, 0.95)
-            
-            if pattern_result["rating"] != "Fake":
-                final_rating = "True"
-        
-        # Additional boost for multiple sources
-        if mongodb_result.get("count", 0) >= 2:
-            final_confidence = min(final_confidence + 0.1, 0.95)
-        
-        response_time = (datetime.utcnow() - start_time).total_seconds()
-
-        return {
-            "status": "success",
-            "verified": final_rating in ["True", "Likely True"],
-            "headline": headline,
-            "rating": final_rating,
-            "confidence": round(final_confidence, 2),
-            "response_time_seconds": round(response_time, 2),
-            "sources_checked": {
-                "pattern_analysis": True,
-                "database_search": mongodb_result.get("found", False)
-            },
-            "matches_found": mongodb_result.get("count", 0),
-            "database_matches": mongodb_result.get("matches", []),
-            "method": "pattern_database",
-            "message": f"Fast analysis completed in {response_time:.1f}s: {final_rating}"
-        }
-
-    except Exception as e:
-        # Fallback to instant version
-        return await verify_news_instant(headline)
-
-@news_router.post("/verify-news-comprehensive")
+# ---------------- MAIN VERIFICATION ROUTE ----------------
+@news_router.post("/verify-news")
 async def verify_news_comprehensive(headline: str = Form(...)):
     """
     🔍 COMPREHENSIVE verification - pattern + DB + external news
@@ -355,13 +238,11 @@ async def verify_news_comprehensive(headline: str = Form(...)):
         
         # Step 4: Calculate comprehensive confidence
         confidence_factors = [pattern_result["confidence"]]
-        rating_factors = []
         
         # MongoDB influence
         if mongodb_result.get("found"):
             db_boost = 0.15 + (mongodb_result["count"] * 0.05)
             confidence_factors.append(min(pattern_result["confidence"] + db_boost, 0.9))
-            rating_factors.append("database_match")
         
         # External news influence
         if gnews_result.get("found"):
@@ -369,7 +250,6 @@ async def verify_news_comprehensive(headline: str = Form(...)):
             if gnews_result.get("trusted_sources", 0) > 0:
                 external_boost += 0.1  # Extra boost for trusted domains
             confidence_factors.append(min(pattern_result["confidence"] + external_boost, 0.95))
-            rating_factors.append("external_verification")
         
         # Calculate final score
         final_confidence = sum(confidence_factors) / len(confidence_factors)
@@ -406,55 +286,13 @@ async def verify_news_comprehensive(headline: str = Form(...)):
                 "database_matches": mongodb_result.get("matches", []),
                 "external_articles": gnews_result.get("articles", [])
             },
-            "method": "comprehensive",
-            "message": f"Comprehensive analysis: {final_rating} ({final_confidence*100}% confidence)"
+            "message": f"Analysis completed in {response_time:.1f}s: {final_rating} ({final_confidence*100}% confidence)"
         }
 
     except Exception as e:
-        # Fallback to fast version
-        return await verify_news_fast(headline)
+        raise HTTPException(status_code=500, detail=f"Verification error: {str(e)}")
 
-# ---------------- SIMPLE NEWS CATEGORIZATION (No ML) ----------------
-
-CATEGORY_KEYWORDS = {
-    "Business": ["company", "startup", "brand", "market", "investment", "IPO", "business", "deal", "corporate", "firm", "profit", "revenue", "stock", "share", "economy", "financial", "bank", "money", "merger", "acquisition", "quarterly", "earning", "dividend", "market share"],
-    "Sports": ["match", "tournament", "football", "cricket", "goal", "player", "league", "score", "sports", "game", "win", "championship", "olympics", "trophy", "medal", "coach", "team", "victory", "defeat", "tournament"],
-    "Entertainment": ["movie", "film", "celebrity", "song", "album", "show", "series", "tv", "entertainment", "actor", "actress", "director", "oscar", "award", "hollywood", "bollywood", "netflix", "amazon prime", "trailer", "release", "premiere"],
-    "Politics": ["election", "government", "minister", "policy", "vote", "political", "party", "democrat", "republican", "parliament", "congress", "president", "prime minister", "senate", "campaign", "bill", "law", "policy", "diplomacy"],
-    "Health": ["disease", "medicine", "vaccine", "hospital", "covid", "health", "medical", "doctor", "patient", "treatment", "virus", "pandemic", "healthcare", "symptom", "recovery", "outbreak", "epidemic", "clinic", "pharmacy"],
-    "Science": ["research", "experiment", "discovery", "scientist", "science", "technology", "study", "innovation", "breakthrough", "nasa", "space", "robot", "ai", "artificial intelligence", "quantum", "physics", "chemistry", "biology"],
-    "Technology": ["tech", "technology", "computer", "software", "hardware", "app", "digital", "internet", "social media", "ai", "machine learning", "apple", "google", "microsoft", "facebook", "amazon", "tesla", "spacex", "startup", "innovation"],
-    "Environment": ["environment", "climate", "weather", "global warming", "pollution", "conservation", "green", "sustainable", "energy", "renewable", "carbon", "emission", "forest", "wildlife", "nature", "eco-friendly"]
-}
-
-def categorize_news_simple(title: str, description: str = "") -> dict:
-    """Simple keyword-based categorization (no ML)"""
-    text = f"{title} {description}".lower()
-    
-    category_scores = {}
-    for category, keywords in CATEGORY_KEYWORDS.items():
-        score = 0
-        for keyword in keywords:
-            if keyword in text:
-                score += 1
-        category_scores[category] = score
-    
-    if category_scores:
-        best_category = max(category_scores.items(), key=lambda x: x[1])
-        if best_category[1] > 0:
-            confidence = min(best_category[1] / 10, 1.0)
-            return {
-                "category": best_category[0],
-                "confidence": round(confidence, 2),
-                "all_scores": {k: v for k, v in category_scores.items() if v > 0}
-            }
-    
-    return {"category": "Other", "confidence": 0.1, "all_scores": {}}
-
-# ---------------- KEEP ALL YOUR EXISTING USER ROUTES ----------------
-
-# [ALL YOUR EXISTING USER ROUTES REMAIN UNCHANGED]
-# ---------------- User Routes ----------------
+# ---------------- KEEP EXISTING USER ROUTES ----------------
 @user_router.post("/register")
 async def register_user(new_user: User, background_tasks: BackgroundTasks):
     email = new_user.email.strip().lower()
@@ -488,29 +326,16 @@ async def signin_user(login_user: LoginUser):
         }
     }
 
-# [REST OF YOUR EXISTING USER ROUTES...]
-
 # ---------------- Register Routers ----------------
 app.include_router(user_router)
 app.include_router(news_router)
 app.include_router(report_router)
 
-# ---------------- Enhanced Health Check ----------------
+# ---------------- Health Check ----------------
 @app.get("/health")
 def health_check():
     return {
         "status": "ok", 
-        "time": datetime.utcnow().isoformat(), 
-        "optimized": True,
-        "dependencies": "minimal",
-        "methods": "pattern_matching",
-        "fast_routes": [
-            {"path": "/verify-news-instant", "speed": "instant", "dependencies": "none"},
-            {"path": "/verify-news-fast", "speed": "1-3s", "dependencies": "mongodb"},
-            {"path": "/verify-news-comprehensive", "speed": "3-5s", "dependencies": "mongodb+gnews"}
-        ]
+        "time": datetime.utcnow().isoformat(),
+        "message": "Lightweight Fake News Detector API"
     }
-
-@app.head("/health")
-def health_check_head():
-    return {"status": "ok"}
