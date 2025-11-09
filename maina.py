@@ -406,145 +406,95 @@ def get_smart_trending_news(limit: int = 100):
 model_st = SentenceTransformer("paraphrase-MiniLM-L3-v2")
 
 @news_router.post("/verify-news")
-async def verify_news_advanced(headline: str = Form(...)):
+async def verify_news_small_scale(headline: str = Form(...)):
     """
-    🚀 Smart news verification combining:
-    1️⃣ ML Model Prediction
-    2️⃣ Google Fact Check
-    3️⃣ NewsData.io
-    4️⃣ GNews
-    5️⃣ Semantic MongoDB Match (Sentence Transformer)
-    Confidence increases with semantic and factual matches.
+    ⚡ Fast exhibition version:
+    1️⃣ Check MongoDB for similar recent news
+    2️⃣ Use small semantic difference (won/lost)
+    3️⃣ Fallback to GNews if needed
     """
     try:
-        GOOGLE_KEY = os.getenv("GOOGLE_FACTCHECK_KEY")
-        NEWSDATA_API_KEY = os.getenv("NEWSDATA_API_KEY")
-        GNEWS_API_KEY = os.getenv("GNEWS_API_KEY")
+        headline = headline.strip()
+        if not headline:
+            raise HTTPException(status_code=400, detail="Headline required")
 
-        if not (GOOGLE_KEY and NEWSDATA_API_KEY and GNEWS_API_KEY):
-            raise HTTPException(status_code=500, detail="API keys not configured properly.")
+        now = datetime.utcnow()
+        recent_limit = now - timedelta(days=15)
 
-        headline_clean = headline.strip()
-        if not headline_clean:
-            raise HTTPException(status_code=400, detail="Headline cannot be empty")
+        # 1️⃣ Fetch recent MongoDB news (only title + url)
+        cursor = news_collection.find(
+            {"createdAt": {"$gte": recent_limit}},
+            {"title": 1, "url": 1}
+        )
+        docs = list(cursor)
+        if not docs:
+            raise HTTPException(status_code=404, detail="No recent news available")
 
-        # --- 🧠 Step 1: ML model prediction ---
-        ml_confidence, ml_rating = 0.5, "Uncertain"
-        try:
-            X_test = vectorizer.transform([headline_clean])
-            y_pred = model.predict(X_test)
-            pred_label = label_encoder.inverse_transform(y_pred)[0]
-            if pred_label.lower() == "true":
-                ml_confidence, ml_rating = 0.7, "True"
+        # 2️⃣ Compute semantic similarity
+        query_emb = model_st.encode(headline, convert_to_tensor=True)
+        matches = []
+        for doc in docs:
+            title = doc.get("title", "")
+            if not title:
+                continue
+            sim = util.cos_sim(query_emb, model_st.encode(title, convert_to_tensor=True)).item()
+            if sim > 0.7:
+                matches.append((title, sim, doc.get("url", "")))
+
+        # 3️⃣ Quick semantic difference check
+        keywords_flip = [
+            ("won", "lost"), ("killed", "saved"), ("increase", "decrease"),
+            ("rise", "fall"), ("approve", "reject")
+        ]
+
+        opposite = any(
+            (a in headline.lower() and b in m[0].lower()) or
+            (b in headline.lower() and a in m[0].lower())
+            for a, b in keywords_flip for m in matches
+        )
+
+        if len(matches) >= 2:
+            if opposite:
+                rating, confidence = "Fake", 0.3
             else:
-                ml_confidence, ml_rating = 0.3, "Fake"
-        except Exception as e:
-            print("⚠️ ML model error:", e)
+                rating, confidence = "True", 0.8
+            return {
+                "status": "success",
+                "verified": rating == "True",
+                "headline": headline,
+                "rating": rating,
+                "confidence": confidence,
+                "source": "Local MongoDB",
+                "matched_titles": [m[0] for m in matches[:3]],
+                "links": [m[2] for m in matches if m[2]],
+                "message": f"Predicted as {rating} ({confidence*100:.0f}% confidence) using MongoDB data."
+            }
 
-        total_confidence, found_count = ml_confidence, 1
-        all_sources, all_links = ["ML Model"], []
+        # 4️⃣ Fallback: small, fast GNews search
+        GNEWS_API_KEY = os.getenv("GNEWS_API_KEY")
+        url = f"https://gnews.io/api/v4/search?q={headline}&token={GNEWS_API_KEY}&lang=en"
+        res = requests.get(url, timeout=10)
+        data = res.json()
 
-        # --- 🔹 Step 2: Google Fact Check ---
-        try:
-            g_url = f"https://factchecktools.googleapis.com/v1alpha1/claims:search?query={headline_clean}&key={GOOGLE_KEY}"
-            g_res = requests.get(g_url, timeout=25)
-            if g_res.status_code == 200:
-                data = g_res.json()
-                if "claims" in data:
-                    claim = data["claims"][0]
-                    review = claim.get("claimReview", [{}])[0]
-                    rating = review.get("textualRating", "")
-                    publisher = review.get("publisher", {}).get("name", "Google Fact Check")
-                    link = review.get("url", "")
-                    conf = (
-                        0.9 if "true" in rating.lower()
-                        else 0.6 if "partly" in rating.lower()
-                        else 0.2 if "false" in rating.lower()
-                        else 0.5
-                    )
-                    total_confidence += conf
-                    found_count += 1
-                    all_sources.append(publisher)
-                    if link:
-                        all_links.append(link)
-        except Exception as e:
-            print("⚠️ Google FactCheck error:", e)
-
-        # --- 🔹 Step 3: NewsData.io ---
-        try:
-            nd_url = f"https://newsdata.io/api/1/news?apikey={NEWSDATA_API_KEY}&q={headline_clean}&language=en"
-            nd_res = requests.get(nd_url, timeout=25)
-            data = nd_res.json()
-            if data.get("results"):
-                for n in data["results"][:3]:
-                    total_confidence += 0.8
-                    found_count += 1
-                    all_sources.append(n.get("source_id", "NewsData.io"))
-                    if n.get("link"):
-                        all_links.append(n["link"])
-        except Exception as e:
-            print("⚠️ NewsData.io error:", e)
-
-        # --- 🔹 Step 4: GNews ---
-        try:
-            gnews_url = f"https://gnews.io/api/v4/search?q={headline_clean}&token={GNEWS_API_KEY}&lang=en"
-            res = requests.get(gnews_url, timeout=25)
-            data = res.json()
-            if "articles" in data:
-                for a in data["articles"][:3]:
-                    total_confidence += 0.75
-                    found_count += 1
-                    all_sources.append(a.get("source", {}).get("name", "GNews"))
-                    if a.get("url"):
-                        all_links.append(a["url"])
-        except Exception as e:
-            print("⚠️ GNews error:", e)
-
-        # --- 🔹 Step 5: Semantic MongoDB search ---
-        try:
-            query_emb = model_st.encode(headline_clean, convert_to_tensor=True)
-            cursor = news_collection.find({}, {"title": 1, "url": 1})
-            matches = []
-            for doc in cursor:
-                title = doc.get("title", "")
-                if not title:
-                    continue
-                score = util.cos_sim(query_emb, model_st.encode(title, convert_to_tensor=True)).item()
-                if score > 0.75:  # threshold for semantic similarity
-                    matches.append((title, score, doc.get("url", "")))
-
-            if matches:
-                total_confidence += 0.85
-                found_count += 1
-                all_sources.append("MongoDB Semantic Match")
-                for _, _, url in matches:
-                    if url:
-                        all_links.append(url)
-        except Exception as e:
-            print("⚠️ MongoDB semantic search error:", e)
-
-        # --- 🔹 Step 6: Final classification ---
-        avg_conf = round(total_confidence / max(found_count, 1), 2)
-        if avg_conf >= 0.7:
-            final_rating = "True"
-        elif avg_conf <= 0.3:
-            final_rating = "Fake"
+        if "articles" in data and len(data["articles"]) > 0:
+            rating, confidence = "True", 0.7
+            links = [a["url"] for a in data["articles"][:3]]
         else:
-            final_rating = "Uncertain"
+            rating, confidence, links = "Uncertain", 0.5, []
 
         return {
             "status": "success",
-            "headline": headline_clean,
-            "verified": final_rating == "True",
-            "confidence": avg_conf,
-            "rating": final_rating,
-            "sources_checked": list(set(all_sources)),
-            "links": list(set(all_links)),
-            "message": f"News classified as {final_rating} with {avg_conf * 100:.0f}% confidence."
+            "verified": rating == "True",
+            "headline": headline,
+            "rating": rating,
+            "confidence": confidence,
+            "source": "GNews (fallback)",
+            "links": links,
+            "message": f"Result: {rating} ({confidence*100:.0f}% confidence)"
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error verifying news: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
 
 # ---------------- Traveller Updates (Local DB only) ----------------
 @news_router.get("/traveller-updates")
