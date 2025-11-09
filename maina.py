@@ -530,6 +530,7 @@ def get_smart_trending_news(limit: int = 100):
 
 # ---------------- Verify News Route (Google Fact Check API) ----------------
 # ---------------- Verify News Route (Integrated: Google Fact Check + Local DB) ----------------
+@news_router.get("/verify-news")
 async def verify_news_comprehensive(headline: str = Form(...)):
     """
     Full verification — pattern + full DB + external GNews
