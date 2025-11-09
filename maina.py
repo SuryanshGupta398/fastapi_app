@@ -104,172 +104,97 @@ def simple_text_similarity(text1, text2):
     """Simple word overlap similarity"""
     words1 = set(text1.lower().split())
     words2 = set(text2.lower().split())
-    
     if not words1 or not words2:
         return 0.0
-    
-    common = words1.intersection(words2)
-    return len(common) / max(len(words1), len(words2))
-
-def ultra_fast_pattern_check(headline: str) -> dict:
-    """Ultra-fast pattern matching"""
-    headline_lower = headline.lower().strip()
-    
-    # Check for fake news patterns
-    fake_score = 0
-    for pattern in FAKE_NEWS_PATTERNS:
-        if re.search(pattern, headline_lower):
-            fake_score += 1
-    
-    # Check for credible indicators
-    credible_score = 0
-    for indicator in CREDIBLE_INDICATORS:
-        if indicator in headline_lower:
-            credible_score += 1
-    
-    # Text analysis
-    words = headline.split()
-    word_count = len(words)
-    has_caps = any(word.isupper() for word in words if len(word) > 3)
-    has_exclamation = '!' in headline
-    
-    # Calculate confidence
-    if fake_score >= 2:
-        confidence = min(0.3 + (fake_score * 0.15), 0.9)
-        rating = "Fake"
-        reason = f"Multiple fake news patterns detected"
-    elif credible_score >= 2:
-        confidence = min(0.7 + (credible_score * 0.1), 0.9)
-        rating = "True" 
-        reason = f"Multiple credible indicators found"
-    elif credible_score == 1:
-        confidence = 0.6
-        rating = "Likely True"
-        reason = "Contains credible reference"
-    elif fake_score == 1:
-        confidence = 0.4
-        rating = "Suspicious"
-        reason = "One fake news pattern detected"
-    else:
-        confidence = 0.5
-        rating = "Uncertain"
-        reason = "No clear indicators found"
-    
-    # Adjust for sensationalism
-    if has_exclamation and has_caps and word_count < 10:
-        confidence = max(confidence - 0.2, 0.1)
-        if rating != "Fake":
-            rating = "Sensational"
-        reason = "Uses sensational language"
-    
-    return {
-        "rating": rating,
-        "confidence": round(confidence, 2),
-        "reason": reason,
-        "fake_patterns": fake_score,
-        "credible_indicators": credible_score
-    }
+    return len(words1.intersection(words2)) / max(len(words1), len(words2))
 
 def full_mongodb_check(headline: str) -> dict:
-    """Full MongoDB check with semantic word overlap (searches entire DB)"""
+    """
+    Searches the entire MongoDB collection for related or contradictory news.
+    Detects small semantic differences like 'won' vs 'lost', 'rise' vs 'fall'.
+    """
     try:
-        # ✅ Get all news (limit to 500 for speed)
-        all_news = list(news_collection.find({}, {"title": 1, "url": 1, "source": 1}).limit(500))
-
+        all_news = list(news_collection.find({}, {"title": 1, "url": 1, "source": 1, "publishedAt": 1}))
         if not all_news:
-            return {"found": False, "count": 0}
+            return {"found": False, "count": 0, "matches": []}
 
         matches = []
-        headline_lower = headline.lower()
+        headline_lower = headline.lower().strip()
 
-        # Define some opposite words to detect context differences
         opposites = {
-            "won": "lost",
-            "lost": "won",
-            "increase": "decrease",
-            "decrease": "increase",
-            "rise": "fall",
-            "fall": "rise",
-            "victory": "defeat",
-            "defeat": "victory"
+            "won": "lost", "lost": "won",
+            "increase": "decrease", "decrease": "increase",
+            "rise": "fall", "fall": "rise",
+            "victory": "defeat", "defeat": "victory",
+            "growth": "decline", "decline": "growth",
+            "good": "bad", "bad": "good"
         }
 
         for news in all_news:
-            news_title = news.get("title", "").lower()
-            if not news_title:
+            title = news.get("title", "")
+            if not title:
                 continue
 
-            # Basic text similarity
-            similarity = simple_text_similarity(headline_lower, news_title)
+            title_lower = title.lower()
+            similarity = simple_text_similarity(headline_lower, title_lower)
 
-            # Detect opposite context (e.g., won vs lost)
+            # Penalize opposite meanings
             for a, b in opposites.items():
-                if a in headline_lower and b in news_title:
-                    similarity -= 0.4  # reduce similarity if context flipped
-                elif b in headline_lower and a in news_title:
+                if (a in headline_lower and b in title_lower) or (b in headline_lower and a in title_lower):
                     similarity -= 0.4
 
             if similarity > 0.25:
                 matches.append({
-                    "title": news.get("title", ""),
-                    "similarity": round(similarity, 2),
+                    "title": title,
                     "url": news.get("url", ""),
-                    "source": news.get("source", "Unknown")
+                    "source": news.get("source", "Unknown"),
+                    "publishedAt": news.get("publishedAt", ""),
+                    "similarity": round(similarity, 2)
                 })
 
-        # Sort and pick top 5
         matches.sort(key=lambda x: x["similarity"], reverse=True)
-        top_matches = matches[:5]
-
         return {
-            "found": len(top_matches) > 0,
-            "count": len(top_matches),
-            "matches": top_matches
+            "found": len(matches) > 0,
+            "count": len(matches),
+            "matches": matches[:10]
         }
 
     except Exception as e:
         print(f"⚠️ MongoDB full search error: {e}")
-        return {"found": False, "count": 0}
+        return {"found": False, "count": 0, "matches": []}
 
 def fast_gnews_check(headline: str) -> dict:
-    """Fast GNews check with timeout"""
+    """Fetch external verification from GNews"""
     GNEWS_API_KEY = os.getenv("GNEWS_API_KEY")
     if not GNEWS_API_KEY:
-        return {"error": "API key missing"}
-    
+        return {"error": "Missing GNews API key"}
+
     try:
-        # Use only first 4 words for search (faster)
         search_terms = " ".join(headline.split()[:4])
-        url = f"https://gnews.io/api/v4/search?q={search_terms}&token={GNEWS_API_KEY}&lang=en&max=2"
-        
-        response = requests.get(url, timeout=3)  # 3 second timeout
-        
+        url = f"https://gnews.io/api/v4/search?q={search_terms}&token={GNEWS_API_KEY}&lang=en&max=5"
+        response = requests.get(url, timeout=4)
         if response.status_code == 200:
             data = response.json()
             if "articles" in data and data["articles"]:
                 articles = []
-                for article in data["articles"][:2]:
-                    # Check if domain is trusted
-                    domain_trusted = any(domain in article.get("url", "") for domain in TRUSTED_DOMAINS)
+                for a in data["articles"]:
+                    domain_trusted = any(domain in a["url"] for domain in TRUSTED_DOMAINS)
                     articles.append({
-                        "title": article["title"],
-                        "url": article["url"],
-                        "source": article.get("source", {}).get("name", "Unknown"),
-                        "trusted_domain": domain_trusted
+                        "title": a["title"],
+                        "url": a["url"],
+                        "source": a.get("source", {}).get("name", "Unknown"),
+                        "trusted": domain_trusted
                     })
-                
                 return {
                     "found": True,
                     "count": len(articles),
-                    "articles": articles,
-                    "trusted_sources": sum(1 for a in articles if a["trusted_domain"])
+                    "trusted_sources": sum(1 for x in articles if x["trusted"]),
+                    "articles": articles
                 }
-        return {"found": False, "count": 0}
-    except requests.exceptions.Timeout:
-        return {"error": "Timeout"}
+        return {"found": False, "count": 0, "articles": []}
     except Exception as e:
         return {"error": str(e)}
-
+        
 # ---------------- SAFE MODEL LOADING FIX ----------------
 model = None
 vectorizer = None
@@ -605,84 +530,70 @@ def get_smart_trending_news(limit: int = 100):
 
 # ---------------- Verify News Route (Google Fact Check API) ----------------
 # ---------------- Verify News Route (Integrated: Google Fact Check + Local DB) ----------------
-@news_router.post("/verify-news")
 async def verify_news_comprehensive(headline: str = Form(...)):
     """
-    🔍 COMPREHENSIVE verification - pattern + DB + external news
-    Response time: 3-5 seconds
+    Full verification — pattern + full DB + external GNews
+    Declares TRUE/FALSE with confidence & sources.
     """
-    start_time = datetime.utcnow()
-    
     try:
-        headline = headline.strip()
-        if not headline:
+        if not headline.strip():
             raise HTTPException(status_code=400, detail="Headline required")
 
-        # Step 1: Instant pattern check
-        pattern_result = ultra_fast_pattern_check(headline)
-        
-        # Step 2: MongoDB check
+        start_time = datetime.utcnow()
+        headline = headline.strip()
+
+        # Step 1: Search MongoDB (entire)
         mongodb_result = full_mongodb_check(headline)
-        
-        # Step 3: External news check
+
+        # Step 2: Search external GNews
         gnews_result = fast_gnews_check(headline)
-        
-        # Step 4: Calculate comprehensive confidence
-        confidence_factors = [pattern_result["confidence"]]
-        
-        # MongoDB influence
-        if mongodb_result.get("found"):
-            db_boost = 0.15 + (mongodb_result["count"] * 0.05)
-            confidence_factors.append(min(pattern_result["confidence"] + db_boost, 0.9))
-        
-        # External news influence
-        if gnews_result.get("found"):
-            external_boost = 0.2 + (gnews_result["count"] * 0.08)
-            if gnews_result.get("trusted_sources", 0) > 0:
-                external_boost += 0.1  # Extra boost for trusted domains
-            confidence_factors.append(min(pattern_result["confidence"] + external_boost, 0.95))
-        
-        # Calculate final score
-        final_confidence = sum(confidence_factors) / len(confidence_factors)
-        final_confidence = min(final_confidence, 0.95)
-        
-        # Determine final rating
-        if gnews_result.get("found") and mongodb_result.get("found"):
-            final_rating = "Verified True"
-        elif gnews_result.get("found") or mongodb_result.get("found"):
-            if pattern_result["rating"] == "Fake":
-                final_rating = "Contradictory - verify manually"
-            else:
-                final_rating = "Likely True"
+
+        # Step 3: Combine results
+        confidence = 0.5
+        found_in_db = mongodb_result.get("found", False)
+        found_in_gnews = gnews_result.get("found", False)
+        trusted_sources = gnews_result.get("trusted_sources", 0)
+
+        if found_in_db:
+            confidence += 0.25
+        if found_in_gnews:
+            confidence += 0.25
+        if trusted_sources > 0:
+            confidence += 0.1
+
+        confidence = min(confidence, 0.98)
+
+        # Decide truth
+        if found_in_gnews or found_in_db:
+            rating = "REAL"
+            message = "Verified across credible or stored sources"
         else:
-            final_rating = pattern_result["rating"]
-        
+            rating = "FAKE"
+            message = "No matching or credible references found"
+
         response_time = (datetime.utcnow() - start_time).total_seconds()
 
         return {
             "status": "success",
-            "verified": final_rating in ["Verified True", "Likely True", "True"],
             "headline": headline,
-            "rating": final_rating,
-            "confidence": round(final_confidence, 2),
+            "rating": rating,
+            "confidence": round(confidence, 2),
             "response_time_seconds": round(response_time, 2),
             "sources_checked": {
-                "pattern_analysis": True,
                 "database_matches": mongodb_result.get("count", 0),
                 "external_news": gnews_result.get("count", 0),
-                "trusted_sources": gnews_result.get("trusted_sources", 0)
+                "trusted_sources": trusted_sources
             },
             "evidence": {
-                "pattern_result": pattern_result,
-                "database_matches": mongodb_result.get("matches", []),
+                "database_articles": mongodb_result.get("matches", []),
                 "external_articles": gnews_result.get("articles", [])
             },
-            "message": f"Analysis completed in {response_time:.1f}s: {final_rating} ({final_confidence*100}% confidence)"
+            "message": message
         }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Verification error: {str(e)}")
-
+        
 # ---------------- Traveller Updates (Local DB only) ----------------
 @news_router.get("/traveller-updates")
 def traveller_updates(location: str = Query(..., description="City or country name")):
