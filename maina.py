@@ -614,7 +614,7 @@ def get_smart_trending_news(limit: int = 100):
 @news_router.post("/verify-news")
 async def verify_news_refined(headline: str = Form(...)):
     """
-    ⚡ Smart verification with proper contradiction detection
+    ⚡ Smart verification with strict contradiction detection
     """
     try:
         headline_clean = headline.strip().lower()
@@ -622,14 +622,12 @@ async def verify_news_refined(headline: str = Form(...)):
             raise HTTPException(status_code=400, detail="Headline required")
 
         CONTRADICTION_PAIRS = [
-            ("won", "lost"), ("victory", "defeat"), ("increase", "decrease"),
-            ("rise", "fall"), ("approve", "reject"), ("alive", "dead"),
-            ("true", "false"), ("success", "failure"), ("gain", "loss"),
-            ("win", "lose"), ("positive", "negative"), ("good", "bad"),
-            ("profit", "loss"), ("growth", "decline"), ("support", "oppose")
+            ("won", "lost"), ("win", "lose"), ("victory", "defeat"), 
+            ("champion", "runner-up"), ("lifted", "lost"), ("won", "defeated"),
+            ("beat", "lost to"), ("won", "failed"), ("won", "eliminated")
         ]
 
-        # 1️⃣ Search MongoDB with better contradiction detection
+        # 1️⃣ Search MongoDB with STRICT contradiction detection
         news_cursor = news_collection.find({})
         supporting_matches = []
         contradictory_matches = []
@@ -643,41 +641,51 @@ async def verify_news_refined(headline: str = Form(...)):
 
             title_words = set(title.split())
             
-            # Calculate similarity based on common words
+            # Calculate similarity based on common words (excluding stop words)
             common_words = headline_words.intersection(title_words)
-            similarity = len(common_words) / max(len(headline_words), len(title_words))
-
-            # Check for contradictions - only if similarity is decent
-            if similarity > 0.2:  # At least some overlap
-                has_contradiction = False
+            # Remove common insignificant words
+            insignificant_words = {"the", "a", "an", "in", "on", "at", "to", "for", "of", "and", "or", "but"}
+            common_words = common_words - insignificant_words
+            
+            if not common_words:
+                continue
                 
-                for word1, word2 in CONTRADICTION_PAIRS:
-                    # Headline has word1 but news has word2 = CONTRADICTION
-                    if (word1 in headline_clean and word2 in title):
-                        has_contradiction = True
-                        break
-                    # Headline has word2 but news has word1 = CONTRADICTION  
-                    elif (word2 in headline_clean and word1 in title):
-                        has_contradiction = True
-                        break
+            similarity = len(common_words) / max(len(headline_words - insignificant_words), 
+                                               len(title_words - insignificant_words))
 
-                if has_contradiction:
-                    contradictory_matches.append({
-                        "title": news.get("title", ""),
-                        "url": news.get("url", ""),
-                        "source": news.get("source", "Unknown"),
-                        "similarity": round(similarity, 2),
-                        "contradiction": True
-                    })
-                else:
-                    # This is a supporting match (similar but no contradiction)
-                    supporting_matches.append({
-                        "title": news.get("title", ""),
-                        "url": news.get("url", ""),
-                        "source": news.get("source", "Unknown"),
-                        "similarity": round(similarity, 2),
-                        "contradiction": False
-                    })
+            # STRICT CONTRADICTION DETECTION
+            has_contradiction = False
+            contradiction_details = []
+            
+            for word1, word2 in CONTRADICTION_PAIRS:
+                # Headline has positive word but news has negative word
+                if (word1 in headline_clean and word2 in title):
+                    has_contradiction = True
+                    contradiction_details.append(f"Headline says '{word1}' but news says '{word2}'")
+                    break
+                # Headline has negative word but news has positive word  
+                elif (word2 in headline_clean and word1 in title):
+                    has_contradiction = True
+                    contradiction_details.append(f"Headline says '{word2}' but news says '{word1}'")
+                    break
+
+            match_data = {
+                "title": news.get("title", ""),
+                "url": news.get("url", ""),
+                "source": news.get("source", "Unknown"),
+                "similarity": round(similarity, 2),
+                "common_words": list(common_words)
+            }
+
+            if has_contradiction:
+                # ONLY add as contradiction if similarity is meaningful
+                if similarity > 0.3:  # Higher threshold for contradictions
+                    match_data["contradiction_reason"] = contradiction_details[0]
+                    contradictory_matches.append(match_data)
+            else:
+                # Supporting match - require good similarity
+                if similarity > 0.4:  # Higher threshold for supporting evidence
+                    supporting_matches.append(match_data)
 
         # 2️⃣ Check external GNews
         GNEWS_API_KEY = os.getenv("GNEWS_API_KEY")
@@ -697,43 +705,37 @@ async def verify_news_refined(headline: str = Form(...)):
             except Exception as e:
                 print("⚠️ GNews error:", e)
 
-        # 3️⃣ SMART CONFIDENCE CALCULATION
+        # 3️⃣ STRICT CONFIDENCE CALCULATION
         supporting_count = len(supporting_matches)
         contradictory_count = len(contradictory_matches)
         external_count = len(gnews_articles)
 
-        # Decision logic
-        if contradictory_count > 0 and supporting_count == 0:
-            # Only contradictions found = FAKE
-            rating = "Fake"
-            confidence = min(0.7 + (contradictory_count * 0.1), 0.95)
-            reason = f"Found {contradictory_count} contradictory news articles"
-            
-        elif supporting_count > 0 and contradictory_count == 0:
-            # Only supporting evidence found = TRUE
-            rating = "True"
-            confidence = min(0.6 + (supporting_count * 0.08) + (external_count * 0.05), 0.95)
-            reason = f"Found {supporting_count} supporting news articles"
-            
-        elif supporting_count > 0 and contradictory_count > 0:
-            # Mixed evidence = UNCERTAIN
-            if supporting_count > contradictory_count:
-                rating = "Likely True"
-                confidence = 0.6
-                reason = f"More supporting ({supporting_count}) than contradictory ({contradictory_count}) evidence"
-            elif contradictory_count > supporting_count:
-                rating = "Likely Fake" 
-                confidence = 0.6
-                reason = f"More contradictory ({contradictory_count}) than supporting ({supporting_count}) evidence"
+        print(f"DEBUG: Supporting: {supporting_count}, Contradictory: {contradictory_count}, External: {external_count}")
+
+        # STRICT DECISION LOGIC
+        if contradictory_count > 0:
+            # CONTRADICTIONS FOUND = POTENTIAL FAKE
+            if supporting_count == 0:
+                # Only contradictions = FAKE
+                rating = "Fake"
+                confidence = min(0.8 + (contradictory_count * 0.1), 0.95)
+                reason = f"Found {contradictory_count} contradictory news articles"
             else:
-                rating = "Conflicting"
-                confidence = 0.5
-                reason = "Equal supporting and contradictory evidence"
+                # Both contradictions and supporting = CONFLICTING (leaning fake)
+                rating = "Likely Fake"
+                confidence = 0.7
+                reason = f"Found {contradictory_count} contradictions vs {supporting_count} supporting articles"
+                
+        elif supporting_count > 0:
+            # Only supporting evidence = TRUE
+            rating = "True"
+            confidence = min(0.7 + (supporting_count * 0.08) + (external_count * 0.05), 0.95)
+            reason = f"Found {supporting_count} supporting news articles"
                 
         elif external_count > 0:
             # Only external sources = LIKELY TRUE
             rating = "Likely True"
-            confidence = 0.7
+            confidence = 0.6
             reason = f"Found {external_count} external news sources"
             
         else:
@@ -758,8 +760,8 @@ async def verify_news_refined(headline: str = Form(...)):
                 "external_sources": external_count,
                 "total_sources": len(all_sources)
             },
-            "supporting_evidence": supporting_matches[:5],  # Top 5 matches
-            "contradictory_evidence": contradictory_matches[:5],  # Top 5 contradictions
+            "supporting_evidence": supporting_matches[:3],
+            "contradictory_evidence": contradictory_matches[:3],
             "external_evidence": gnews_articles,
             "credible_sources": all_sources,
             "links": all_links,
