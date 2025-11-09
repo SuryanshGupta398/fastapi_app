@@ -174,7 +174,7 @@ def full_mongodb_check(headline: str) -> dict:
     """Full MongoDB check with semantic word overlap (searches entire DB)"""
     try:
         # ✅ Get all news (limit to 500 for speed)
-        all_news = list(news_collection.find({}, {"title": 1, "url": 1, "source": 1}))
+        all_news = list(news_collection.find({}, {"title": 1, "url": 1, "source": 1}).limit(500))
 
         if not all_news:
             return {"found": False, "count": 0}
