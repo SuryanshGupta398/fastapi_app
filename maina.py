@@ -211,9 +211,9 @@ def full_mongodb_check(headline: str) -> dict:
             # Step 2: Detect opposite meaning (won vs lost)
             for a, b in opposites.items():
                 if a in headline_lower and b in news_lower:
-                    similarity -= 1.0
+                    similarity -= 0.4
                 elif b in headline_lower and a in news_lower:
-                    similarity -= 1.0
+                    similarity -= 0.4
 
             # Step 3: Adjust threshold and store matches
             if similarity > 0.25:
@@ -612,115 +612,79 @@ def get_smart_trending_news(limit: int = 100):
 # ---------------- Verify News Route (Google Fact Check API) ----------------
 # ---------------- Verify News Route (Integrated: Google Fact Check + Local DB) ----------------
 @news_router.post("/verify-news")
-async def verify_news_refined(headline: str = Form(...)):
+async def verify_news_comprehensive(headline: str = Form(...)):
     """
-    ⚡ Smart lightweight verification (MongoDB + GNews + text understanding)
-    Handles opposites like 'won' vs 'lost', 'increase' vs 'decrease'.
+    🔍 COMPREHENSIVE verification - pattern + DB + external news
+    Response time: 3-5 seconds
     """
+    start_time = datetime.utcnow()
+    
     try:
-        import re
-        from datetime import datetime
-
-        headline_clean = headline.strip().lower()
-        if not headline_clean:
+        headline = headline.strip()
+        if not headline:
             raise HTTPException(status_code=400, detail="Headline required")
 
-        CONTRADICTION_PAIRS = [
-            ("won", "lost"), ("victory", "defeat"), ("increase", "decrease"),
-            ("rise", "fall"), ("approve", "reject"), ("alive", "dead"),
-            ("true", "false"), ("success", "failure"), ("gain", "loss")
-        ]
-
-        # 1️⃣ Search entire MongoDB
-        news_cursor = news_collection.find({})
-        matches = []
-        contradictory_matches = []
-
-        for news in news_cursor:
-            title = news.get("title", "").lower()
-            if not title:
-                continue
-
-            # Word overlap similarity
-            words_head = set(headline_clean.split())
-            words_title = set(title.split())
-            common = words_head.intersection(words_title)
-            similarity = len(common) / max(len(words_head), len(words_title))
-
-            # Detect contradictions
-            contradiction = False
-            for a, b in CONTRADICTION_PAIRS:
-                if (a in headline_clean and b in title) or (b in headline_clean and a in title):
-                    contradiction = True
-                    break
-
-            if contradiction:
-                contradictory_matches.append({
-                    "title": news.get("title", ""),
-                    "url": news.get("url", ""),
-                    "source": news.get("source", "Unknown"),
-                    "similarity": round(similarity, 2)
-                })
-            elif similarity > 0.3:
-                matches.append({
-                    "title": news.get("title", ""),
-                    "url": news.get("url", ""),
-                    "source": news.get("source", "Unknown"),
-                    "similarity": round(similarity, 2)
-                })
-
-        # 2️⃣ Check external GNews (optional)
-        GNEWS_API_KEY = os.getenv("GNEWS_API_KEY")
-        gnews_articles = []
-        if GNEWS_API_KEY:
-            try:
-                query = "+".join(headline_clean.split()[:5])
-                g_url = f"https://gnews.io/api/v4/search?q={query}&token={GNEWS_API_KEY}&lang=en&max=3"
-                res = requests.get(g_url, timeout=4)
-                data = res.json()
-                for art in data.get("articles", []):
-                    gnews_articles.append({
-                        "title": art["title"],
-                        "url": art["url"],
-                        "source": art.get("source", {}).get("name", "Unknown")
-                    })
-            except Exception as e:
-                print("⚠️ GNews error:", e)
-
-        # 3️⃣ Compute confidence
-        total_found = len(matches)
-        total_contradict = len(contradictory_matches)
-
-        if total_contradict > 0:
-            rating = "Fake"
-            confidence = 0.9
-        elif total_found > 0:
-            rating = "True"
-            confidence = 0.8 + min(total_found * 0.05, 0.15)
-        elif gnews_articles:
-            rating = "Likely True"
-            confidence = 0.7
+        # Step 1: Instant pattern check
+        pattern_result = ultra_fast_pattern_check(headline)
+        
+        # Step 2: MongoDB check
+        mongodb_result = full_mongodb_check(headline)
+        
+        # Step 3: External news check
+        gnews_result = fast_gnews_check(headline)
+        
+        # Step 4: Calculate comprehensive confidence
+        confidence_factors = [pattern_result["confidence"]]
+        
+        # MongoDB influence
+        if mongodb_result.get("found"):
+            db_boost = 0.15 + (mongodb_result["count"] * 0.05)
+            confidence_factors.append(min(pattern_result["confidence"] + db_boost, 0.9))
+        
+        # External news influence
+        if gnews_result.get("found"):
+            external_boost = 0.2 + (gnews_result["count"] * 0.08)
+            if gnews_result.get("trusted_sources", 0) > 0:
+                external_boost += 0.1  # Extra boost for trusted domains
+            confidence_factors.append(min(pattern_result["confidence"] + external_boost, 0.95))
+        
+        # Calculate final score
+        final_confidence = sum(confidence_factors) / len(confidence_factors)
+        final_confidence = min(final_confidence, 0.95)
+        
+        # Determine final rating
+        if gnews_result.get("found") and mongodb_result.get("found"):
+            final_rating = "Verified True"
+        elif gnews_result.get("found") or mongodb_result.get("found"):
+            if pattern_result["rating"] == "Fake":
+                final_rating = "Contradictory - verify manually"
+            else:
+                final_rating = "Likely True"
         else:
-            rating = "Uncertain"
-            confidence = 0.5
-
-        # 4️⃣ Combine all evidence
-        all_sources = list({m["source"] for m in matches + contradictory_matches + gnews_articles if m.get("source")})
-        all_links = list({m["url"] for m in matches + contradictory_matches + gnews_articles if m.get("url")})
+            final_rating = pattern_result["rating"]
+        
+        response_time = (datetime.utcnow() - start_time).total_seconds()
 
         return {
             "status": "success",
+            "verified": final_rating in ["Verified True", "Likely True", "True"],
             "headline": headline,
-            "rating": rating,
-            "confidence": round(confidence, 2),
-            "found_in_db": total_found,
-            "contradictions": total_contradict,
-            "credible_sources": all_sources,
-            "links": all_links,
-            "db_matches": matches,
-            "contradictory_evidence": contradictory_matches,
-            "gnews_articles": gnews_articles,
-            "message": f"News classified as {rating} ({confidence*100:.0f}% confidence)"
+            "rating": final_rating,
+            "confidence": round(final_confidence, 2),
+            "response_time_seconds": round(response_time, 2),
+            "sources_checked": {
+                "pattern_analysis": True,
+                "database_matches": mongodb_result.get("count", 0),
+                "external_news": gnews_result.get("count", 0),
+                "trusted_sources": gnews_result.get("trusted_sources", 0)
+            },
+            "evidence": {
+    "pattern_result": pattern_result,
+    "database_matches": mongodb_result.get("matches", []),
+    "external_articles": gnews_result.get("articles", []),
+    "all_news_links": [m["url"] for m in mongodb_result.get("matches", []) if m.get("url")]
+},
+            "message": f"Analysis completed in {response_time:.1f}s: {final_rating} ({final_confidence*100}% confidence)"
         }
 
     except Exception as e:
