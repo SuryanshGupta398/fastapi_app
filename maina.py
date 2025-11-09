@@ -612,160 +612,267 @@ def get_smart_trending_news(limit: int = 100):
 # ---------------- Verify News Route (Google Fact Check API) ----------------
 # ---------------- Verify News Route (Integrated: Google Fact Check + Local DB) ----------------
 @news_router.post("/verify-news")
-async def verify_news_refined(headline: str = Form(...)):
+async def verify_news_universal(headline: str = Form(...)):
     """
-    ⚡ Smart verification with strict contradiction detection
+    🌐 UNIVERSAL news verification - works for any type of news
     """
     try:
-        headline_clean = headline.strip().lower()
+        headline_clean = headline.strip()
         if not headline_clean:
             raise HTTPException(status_code=400, detail="Headline required")
 
-        CONTRADICTION_PAIRS = [
-            ("won", "lost"), ("win", "lose"), ("victory", "defeat"), 
-            ("champion", "runner-up"), ("lifted", "lost"), ("won", "defeated"),
-            ("beat", "lost to"), ("won", "failed"), ("won", "eliminated")
-        ]
-
-        # 1️⃣ Search MongoDB with STRICT contradiction detection
-        news_cursor = news_collection.find({})
-        supporting_matches = []
-        contradictory_matches = []
-        
-        headline_words = set(headline_clean.split())
-
-        for news in news_cursor:
-            title = news.get("title", "").lower()
-            if not title:
-                continue
-
-            title_words = set(title.split())
+        # 1️⃣ ULTRA-SMART PATTERN ANALYSIS
+        def analyze_headline_patterns(text):
+            text_lower = text.lower()
             
-            # Calculate similarity based on common words (excluding stop words)
-            common_words = headline_words.intersection(title_words)
-            # Remove common insignificant words
-            insignificant_words = {"the", "a", "an", "in", "on", "at", "to", "for", "of", "and", "or", "but"}
-            common_words = common_words - insignificant_words
-            
-            if not common_words:
-                continue
+            # FAKE NEWS PATTERNS (expanded list)
+            fake_patterns = [
+                # Clickbait & sensational
+                r"you won't believe", r"shocked the world", r"doctors hate", r"this one trick",
+                r"miracle cure", r"secret they don't want", r"instant results", r"viral secret",
+                r"everyone is talking about", r"celebrities are", r"shocking news", 
+                r"the truth about", r"they don't want you to know", r"mainstream media won't tell",
+                r"will make you cry", r"heartbreaking", r"tears of joy", r"you need to see this",
                 
-            similarity = len(common_words) / max(len(headline_words - insignificant_words), 
-                                               len(title_words - insignificant_words))
-
-            # STRICT CONTRADICTION DETECTION
-            has_contradiction = False
-            contradiction_details = []
+                # Financial scams
+                r"make money fast", r"earn.*from home", r"get rich quick", r"instant cash",
+                r"free money", r"guaranteed profit", r"investment secret",
+                
+                # Health scams  
+                r"lose weight fast", r"burn fat instantly", r"cure.*overnight", r"medical breakthrough they hide",
+                
+                # Urgency & fear
+                r"breaking.*emergency", r"urgent.*warning", r"alert.*crisis", r"this is not a drill",
+                
+                # Conspiracy
+                r"cover.up", r"conspiracy", r"they're hiding", r"the real truth"
+            ]
             
-            for word1, word2 in CONTRADICTION_PAIRS:
-                # Headline has positive word but news has negative word
-                if (word1 in headline_clean and word2 in title):
-                    has_contradiction = True
-                    contradiction_details.append(f"Headline says '{word1}' but news says '{word2}'")
-                    break
-                # Headline has negative word but news has positive word  
-                elif (word2 in headline_clean and word1 in title):
-                    has_contradiction = True
-                    contradiction_details.append(f"Headline says '{word2}' but news says '{word1}'")
-                    break
-
-            match_data = {
-                "title": news.get("title", ""),
-                "url": news.get("url", ""),
-                "source": news.get("source", "Unknown"),
-                "similarity": round(similarity, 2),
-                "common_words": list(common_words)
+            # CREDIBLE INDICATORS
+            credible_indicators = [
+                "reuters", "associated press", "ap news", "bbc", "cnn", "al jazeera", 
+                "official statement", "government report", "study shows", "research indicates",
+                "according to data", "statistics show", "peer-reviewed", "confirmed", "verified",
+                "announced", "declared", "reported", "confirmed by", "according to officials"
+            ]
+            
+            fake_score = 0
+            credible_score = 0
+            
+            # Check fake patterns
+            for pattern in fake_patterns:
+                if re.search(pattern, text_lower):
+                    fake_score += 2  # Heavy weight for clear fake patterns
+            
+            # Check credible indicators
+            for indicator in credible_indicators:
+                if indicator in text_lower:
+                    credible_score += 1
+            
+            # Text quality analysis
+            words = text.split()
+            word_count = len(words)
+            has_exclamation = '!' in text
+            has_question = '?' in text
+            all_caps_words = sum(1 for word in words if word.isupper() and len(word) > 3)
+            
+            # Adjust scores based on text quality
+            if has_exclamation and all_caps_words > 1:
+                fake_score += 1  # Sensational language
+            if has_question and "?" in text:
+                fake_score += 0.5  # Questionable claims
+            
+            return {
+                "fake_score": fake_score,
+                "credible_score": credible_score,
+                "word_count": word_count,
+                "has_exclamation": has_exclamation,
+                "has_question": has_question,
+                "all_caps_words": all_caps_words
             }
 
-            if has_contradiction:
-                # ONLY add as contradiction if similarity is meaningful
-                if similarity > 0.3:  # Higher threshold for contradictions
-                    match_data["contradiction_reason"] = contradiction_details[0]
-                    contradictory_matches.append(match_data)
-            else:
-                # Supporting match - require good similarity
-                if similarity > 0.4:  # Higher threshold for supporting evidence
-                    supporting_matches.append(match_data)
-
-        # 2️⃣ Check external GNews
-        GNEWS_API_KEY = os.getenv("GNEWS_API_KEY")
-        gnews_articles = []
-        if GNEWS_API_KEY:
-            try:
-                query = "+".join(headline_clean.split()[:5])
-                g_url = f"https://gnews.io/api/v4/search?q={query}&token={GNEWS_API_KEY}&lang=en&max=3"
-                res = requests.get(g_url, timeout=4)
-                data = res.json()
-                for art in data.get("articles", []):
-                    gnews_articles.append({
-                        "title": art["title"],
-                        "url": art["url"],
-                        "source": art.get("source", {}).get("name", "Unknown")
-                    })
-            except Exception as e:
-                print("⚠️ GNews error:", e)
-
-        # 3️⃣ STRICT CONFIDENCE CALCULATION
-        supporting_count = len(supporting_matches)
-        contradictory_count = len(contradictory_matches)
-        external_count = len(gnews_articles)
-
-        print(f"DEBUG: Supporting: {supporting_count}, Contradictory: {contradictory_count}, External: {external_count}")
-
-        # STRICT DECISION LOGIC
-        if contradictory_count > 0:
-            # CONTRADICTIONS FOUND = POTENTIAL FAKE
-            if supporting_count == 0:
-                # Only contradictions = FAKE
-                rating = "Fake"
-                confidence = min(0.8 + (contradictory_count * 0.1), 0.95)
-                reason = f"Found {contradictory_count} contradictory news articles"
-            else:
-                # Both contradictions and supporting = CONFLICTING (leaning fake)
-                rating = "Likely Fake"
-                confidence = 0.7
-                reason = f"Found {contradictory_count} contradictions vs {supporting_count} supporting articles"
-                
-        elif supporting_count > 0:
-            # Only supporting evidence = TRUE
-            rating = "True"
-            confidence = min(0.7 + (supporting_count * 0.08) + (external_count * 0.05), 0.95)
-            reason = f"Found {supporting_count} supporting news articles"
-                
-        elif external_count > 0:
-            # Only external sources = LIKELY TRUE
-            rating = "Likely True"
-            confidence = 0.6
-            reason = f"Found {external_count} external news sources"
+        pattern_analysis = analyze_headline_patterns(headline_clean)
+        
+        # 2️⃣ DATABASE VERIFICATION - Search for similar headlines
+        def search_database_evidence(headline):
+            # Search for exact or similar matches
+            headline_lower = headline.lower()
+            supporting_evidence = []
+            contradictory_evidence = []
             
-        else:
-            # No evidence = UNCERTAIN
-            rating = "Uncertain"
-            confidence = 0.3
-            reason = "No supporting or contradictory evidence found"
+            # Search strategies
+            search_queries = [
+                {"title": {"$regex": headline_lower[:50], "$options": "i"}},  # Partial match
+                {"$text": {"$search": headline_lower}}  # Text search if index exists
+            ]
+            
+            all_matches = []
+            for query in search_queries:
+                try:
+                    matches = list(news_collection.find(query).limit(10))
+                    all_matches.extend(matches)
+                except:
+                    continue
+            
+            # Remove duplicates
+            seen_titles = set()
+            unique_matches = []
+            for match in all_matches:
+                title = match.get("title", "").lower()
+                if title not in seen_titles:
+                    seen_titles.add(title)
+                    unique_matches.append(match)
+            
+            # Analyze matches for consistency
+            for article in unique_matches:
+                article_title = article.get("title", "").lower()
+                
+                # Simple similarity check
+                headline_words = set(headline_lower.split())
+                article_words = set(article_title.split())
+                common_words = headline_words.intersection(article_words)
+                similarity = len(common_words) / max(len(headline_words), len(article_words))
+                
+                if similarity > 0.4:  # Good match
+                    match_data = {
+                        "title": article.get("title", ""),
+                        "url": article.get("url", ""),
+                        "source": article.get("source", "Unknown"),
+                        "similarity": round(similarity, 2),
+                        "published": article.get("publishedAt", "")
+                    }
+                    
+                    # Check for contradictions in key outcomes
+                    contradiction_keywords = [
+                        ("won", "lost"), ("win", "lose"), ("increase", "decrease"),
+                        ("rise", "fall"), ("approved", "rejected"), ("alive", "dead")
+                    ]
+                    
+                    has_contradiction = False
+                    for pos, neg in contradiction_keywords:
+                        if (pos in headline_lower and neg in article_title) or \
+                           (neg in headline_lower and pos in article_title):
+                            has_contradiction = True
+                            match_data["contradiction"] = f"{pos}/{neg}"
+                            break
+                    
+                    if has_contradiction:
+                        contradictory_evidence.append(match_data)
+                    else:
+                        supporting_evidence.append(match_data)
+            
+            return {
+                "supporting": supporting_evidence,
+                "contradictory": contradictory_evidence,
+                "total_matches": len(supporting_evidence) + len(contradictory_evidence)
+            }
 
-        # 4️⃣ Combine all evidence
-        all_sources = list({m["source"] for m in supporting_matches + contradictory_matches + gnews_articles if m.get("source")})
-        all_links = list({m["url"] for m in supporting_matches + contradictory_matches + gnews_articles if m.get("url")})
+        db_evidence = search_database_evidence(headline_clean)
+        
+        # 3️⃣ EXTERNAL VERIFICATION - GNews API
+        def check_external_sources(headline):
+            GNEWS_API_KEY = os.getenv("GNEWS_API_KEY")
+            if not GNEWS_API_KEY:
+                return {"articles": [], "error": "API key missing"}
+            
+            try:
+                # Use key words from headline for search
+                keywords = headline.split()[:5]  # First 5 words
+                query = "+".join(keywords)
+                url = f"https://gnews.io/api/v4/search?q={query}&token={GNEWS_API_KEY}&lang=en&max=3"
+                
+                response = requests.get(url, timeout=5)
+                if response.status_code == 200:
+                    data = response.json()
+                    articles = []
+                    for art in data.get("articles", []):
+                        articles.append({
+                            "title": art["title"],
+                            "url": art["url"],
+                            "source": art.get("source", {}).get("name", "Unknown"),
+                            "published": art.get("publishedAt", "")
+                        })
+                    return {"articles": articles, "count": len(articles)}
+                return {"articles": [], "count": 0}
+            except Exception as e:
+                return {"articles": [], "error": str(e)}
 
+        external_evidence = check_external_sources(headline_clean)
+        
+        # 4️⃣ FINAL DECISION MAKING
+        def calculate_final_verdict(pattern_analysis, db_evidence, external_evidence):
+            # Base scores
+            fake_score = pattern_analysis["fake_score"]
+            credible_score = pattern_analysis["credible_score"]
+            
+            supporting_matches = len(db_evidence["supporting"])
+            contradictory_matches = len(db_evidence["contradictory"])
+            external_matches = external_evidence["count"]
+            
+            # Decision logic
+            # 🚨 HIGH CONFIDENCE FAKE: Clear fake patterns + contradictions
+            if fake_score >= 3 and contradictory_matches > 0:
+                return "Fake", 0.9, "Clear fake news patterns with contradictory evidence"
+            
+            # 🚨 FAKE: Strong fake patterns
+            if fake_score >= 4:
+                return "Fake", 0.85, "Strong fake news patterns detected"
+            
+            # 🚨 FAKE: Multiple contradictions
+            if contradictory_matches >= 2:
+                return "Fake", 0.8, f"Multiple contradictory sources found ({contradictory_matches})"
+            
+            # ✅ HIGH CONFIDENCE REAL: Credible indicators + supporting evidence
+            if credible_score >= 2 and (supporting_matches >= 2 or external_matches >= 2):
+                return "True", 0.9, "Credible sources with supporting evidence"
+            
+            # ✅ REAL: Good supporting evidence
+            if supporting_matches >= 3 or external_matches >= 3:
+                return "True", 0.8, f"Multiple supporting sources found ({supporting_matches + external_matches})"
+            
+            # ✅ REAL: Credible indicators
+            if credible_score >= 3:
+                return "True", 0.75, "Strong credible indicators"
+            
+            # ✅ REAL: Some supporting evidence
+            if supporting_matches >= 1 or external_matches >= 1:
+                return "Likely True", 0.65, "Some supporting evidence found"
+            
+            # ⚠️ UNCERTAIN: Mixed or no evidence
+            if fake_score > 0 and credible_score > 0:
+                return "Uncertain", 0.5, "Mixed indicators - verify manually"
+            
+            # ⚠️ UNCERTAIN: No clear evidence
+            return "Uncertain", 0.4, "Insufficient evidence for verification"
+
+        final_rating, final_confidence, final_reason = calculate_final_verdict(
+            pattern_analysis, db_evidence, external_evidence
+        )
+        
+        # 5️⃣ PREPARE RESPONSE
         return {
             "status": "success",
-            "headline": headline,
-            "rating": rating,
-            "confidence": round(confidence, 2),
-            "reason": reason,
-            "evidence_breakdown": {
-                "supporting_matches": supporting_count,
-                "contradictory_matches": contradictory_count, 
-                "external_sources": external_count,
-                "total_sources": len(all_sources)
+            "headline": headline_clean,
+            "rating": final_rating,
+            "confidence": round(final_confidence, 2),
+            "reason": final_reason,
+            "analysis": {
+                "pattern_analysis": pattern_analysis,
+                "database_evidence": {
+                    "supporting_matches": len(db_evidence["supporting"]),
+                    "contradictory_matches": len(db_evidence["contradictory"]),
+                    "total_matches": db_evidence["total_matches"]
+                },
+                "external_evidence": {
+                    "articles_found": external_evidence["count"]
+                }
             },
-            "supporting_evidence": supporting_matches[:3],
-            "contradictory_evidence": contradictory_matches[:3],
-            "external_evidence": gnews_articles,
-            "credible_sources": all_sources,
-            "links": all_links,
-            "message": f"Analysis: {rating} ({confidence*100:.0f}% confidence) - {reason}"
+            "evidence": {
+                "supporting_articles": db_evidence["supporting"][:3],
+                "contradictory_articles": db_evidence["contradictory"][:3],
+                "external_articles": external_evidence.get("articles", [])[:3]
+            },
+            "message": f"Verification: {final_rating} ({final_confidence*100:.0f}% confidence)"
         }
 
     except Exception as e:
