@@ -96,11 +96,8 @@ CREDIBLE_INDICATORS = [
 ]
 
 TRUSTED_DOMAINS = [
-    "timesofindia.com", "hindustantimes.com", "indiatoday.in",
-    "ndtv.com", "thehindu.com", "indianexpress.com",
-    "news18.com", "livemint.com", "economictimes.indiatimes.com",
-    "business-standard.com", "deccanherald.com", "scroll.in",
-    "theprint.in", "republicworld.com", "dnaindia.com"
+    "reuters.com", "ap.org", "bbc.com", "bbc.co.uk", "aljazeera.com",
+    "nytimes.com", "washingtonpost.com", "theguardian.com"
 ]
 
 def simple_text_similarity(text1, text2):
@@ -173,68 +170,49 @@ def ultra_fast_pattern_check(headline: str) -> dict:
         "credible_indicators": credible_score
     }
 
-def full_mongodb_check(headline: str) -> dict:
-    """
-    Full MongoDB check — searches the entire collection with smart text understanding.
-    Detects small contextual differences like 'won' vs 'lost'.
-    """
+def fast_mongodb_check(headline: str) -> dict:
+    """Fast MongoDB check using simple text matching"""
     try:
-        # Fetch all news titles from MongoDB
-        all_news = list(news_collection.find({}, {"title": 1, "url": 1, "source": 1}))
+        # Search last 3 days only for speed
+        recent_limit = datetime.utcnow() - timedelta(days=3)
         
-        if not all_news:
+        # Get all recent news
+        recent_news = list(news_collection.find({
+            "createdAt": {"$gte": recent_limit}
+        }).limit(50))
+        
+        if not recent_news:
             return {"found": False, "count": 0}
-
+        
+        # Simple similarity matching
         matches = []
-        headline_lower = headline.lower().strip()
-
-        # Define contextual opposites for smarter detection
-        opposites = {
-            "won": "lost", "lost": "won",
-            "increase": "decrease", "decrease": "increase",
-            "rise": "fall", "fall": "rise",
-            "victory": "defeat", "defeat": "victory",
-            "growth": "decline", "decline": "growth",
-            "good": "bad", "bad": "good"
-        }
-
-        for news in all_news:
-            news_title = news.get("title", "")
+        for news in recent_news:
+            news_title = news.get("title", "").lower()
             if not news_title:
                 continue
-
-            news_lower = news_title.lower()
-
-            # Step 1: Basic similarity (word overlap)
-            similarity = simple_text_similarity(headline_lower, news_lower)
-
-            # Step 2: Detect opposite meaning (won vs lost)
-            for a, b in opposites.items():
-                if a in headline_lower and b in news_lower:
-                    similarity -= 0.4
-                elif b in headline_lower and a in news_lower:
-                    similarity -= 0.4
-
-            # Step 3: Adjust threshold and store matches
-            if similarity > 0.25:
+                
+            # Simple word overlap check
+            similarity = simple_text_similarity(headline, news_title)
+            if similarity > 0.3:  # 30% word overlap
                 matches.append({
-                    "title": news_title,
+                    "title": news.get("title", ""),
                     "similarity": round(similarity, 2),
                     "url": news.get("url", ""),
                     "source": news.get("source", "Unknown")
                 })
-
-        # Sort matches by similarity descending
+        
+        # Sort by similarity and take top 3
         matches.sort(key=lambda x: x["similarity"], reverse=True)
-
+        top_matches = matches[:3]
+        
         return {
-            "found": len(matches) > 0,
-            "count": len(matches),
-            "matches": matches[:10]  # Top 10 results for response clarity
+            "found": len(top_matches) > 0,
+            "count": len(top_matches),
+            "matches": top_matches
         }
-
+        
     except Exception as e:
-        print(f"⚠️ MongoDB full search error: {e}")
+        print(f"MongoDB check error: {e}")
         return {"found": False, "count": 0}
 
 def fast_gnews_check(headline: str) -> dict:
@@ -628,7 +606,7 @@ async def verify_news_comprehensive(headline: str = Form(...)):
         pattern_result = ultra_fast_pattern_check(headline)
         
         # Step 2: MongoDB check
-        mongodb_result = full_mongodb_check(headline)
+        mongodb_result = fast_mongodb_check(headline)
         
         # Step 3: External news check
         gnews_result = fast_gnews_check(headline)
@@ -679,11 +657,10 @@ async def verify_news_comprehensive(headline: str = Form(...)):
                 "trusted_sources": gnews_result.get("trusted_sources", 0)
             },
             "evidence": {
-    "pattern_result": pattern_result,
-    "database_matches": mongodb_result.get("matches", []),
-    "external_articles": gnews_result.get("articles", []),
-    "all_news_links": [m["url"] for m in mongodb_result.get("matches", []) if m.get("url")]
-},
+                "pattern_result": pattern_result,
+                "database_matches": mongodb_result.get("matches", []),
+                "external_articles": gnews_result.get("articles", [])
+            },
             "message": f"Analysis completed in {response_time:.1f}s: {final_rating} ({final_confidence*100}% confidence)"
         }
 
