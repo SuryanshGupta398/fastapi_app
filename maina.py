@@ -170,65 +170,49 @@ def ultra_fast_pattern_check(headline: str) -> dict:
         "credible_indicators": credible_score
     }
 
-def full_mongodb_check(headline: str) -> dict:
-    """Full MongoDB check with semantic word overlap (searches entire DB)"""
+def fast_mongodb_check(headline: str) -> dict:
+    """Fast MongoDB check using simple text matching"""
     try:
-        # ✅ Get all news (limit to 500 for speed)
-        all_news = list(news_collection.find({}, {"title": 1, "url": 1, "source": 1}).limit(500))
-
-        if not all_news:
+        # Search last 3 days only for speed
+        recent_limit = datetime.utcnow() - timedelta(days=3)
+        
+        # Get all recent news
+        recent_news = list(news_collection.find({
+            "createdAt": {"$gte": recent_limit}
+        }).limit(50))
+        
+        if not recent_news:
             return {"found": False, "count": 0}
-
+        
+        # Simple similarity matching
         matches = []
-        headline_lower = headline.lower()
-
-        # Define some opposite words to detect context differences
-        opposites = {
-            "won": "lost",
-            "lost": "won",
-            "increase": "decrease",
-            "decrease": "increase",
-            "rise": "fall",
-            "fall": "rise",
-            "victory": "defeat",
-            "defeat": "victory"
-        }
-
-        for news in all_news:
+        for news in recent_news:
             news_title = news.get("title", "").lower()
             if not news_title:
                 continue
-
-            # Basic text similarity
-            similarity = simple_text_similarity(headline_lower, news_title)
-
-            # Detect opposite context (e.g., won vs lost)
-            for a, b in opposites.items():
-                if a in headline_lower and b in news_title:
-                    similarity -= 0.4  # reduce similarity if context flipped
-                elif b in headline_lower and a in news_title:
-                    similarity -= 0.4
-
-            if similarity > 0.25:
+                
+            # Simple word overlap check
+            similarity = simple_text_similarity(headline, news_title)
+            if similarity > 0.3:  # 30% word overlap
                 matches.append({
                     "title": news.get("title", ""),
                     "similarity": round(similarity, 2),
                     "url": news.get("url", ""),
                     "source": news.get("source", "Unknown")
                 })
-
-        # Sort and pick top 5
+        
+        # Sort by similarity and take top 3
         matches.sort(key=lambda x: x["similarity"], reverse=True)
-        top_matches = matches[:5]
-
+        top_matches = matches[:3]
+        
         return {
             "found": len(top_matches) > 0,
             "count": len(top_matches),
             "matches": top_matches
         }
-
+        
     except Exception as e:
-        print(f"⚠️ MongoDB full search error: {e}")
+        print(f"MongoDB check error: {e}")
         return {"found": False, "count": 0}
 
 def fast_gnews_check(headline: str) -> dict:
@@ -622,7 +606,7 @@ async def verify_news_comprehensive(headline: str = Form(...)):
         pattern_result = ultra_fast_pattern_check(headline)
         
         # Step 2: MongoDB check
-        mongodb_result = full_mongodb_check(headline)
+        mongodb_result = fast_mongodb_check(headline)
         
         # Step 3: External news check
         gnews_result = fast_gnews_check(headline)
@@ -631,31 +615,10 @@ async def verify_news_comprehensive(headline: str = Form(...)):
         confidence_factors = [pattern_result["confidence"]]
         
         # MongoDB influence
-        # if mongodb_result.get("found"):
-        #     db_boost = 0.15 + (mongodb_result["count"] * 0.05)
-        #     confidence_factors.append(min(pattern_result["confidence"] + db_boost, 0.9))
-        # MongoDB influence (context-aware)
         if mongodb_result.get("found"):
-    # Check if any opposite meaning article found
-            opposites = {"won": "lost", "lost": "won", "victory": "defeat", "defeat": "victory"}
-            headline_lower = headline.lower()
-            contradictory_match = False
-            
-            for match in mongodb_result.get("matches", []):
-                title_lower = match["title"].lower()
-                for a, b in opposites.items():
-                    if (a in headline_lower and b in title_lower) or (b in headline_lower and a in title_lower):
-                        contradictory_match = True
-                        break
-
-            if contradictory_match:
-        # If contradiction found, reduce confidence instead of boosting
-                db_boost = -0.2
-            else:
-                db_boost = 0.15 + (mongodb_result["count"] * 0.05)
-            
-            confidence_factors.append(min(max(pattern_result["confidence"] + db_boost, 0.1), 0.9))
-
+            db_boost = 0.15 + (mongodb_result["count"] * 0.05)
+            confidence_factors.append(min(pattern_result["confidence"] + db_boost, 0.9))
+        
         # External news influence
         if gnews_result.get("found"):
             external_boost = 0.2 + (gnews_result["count"] * 0.08)
