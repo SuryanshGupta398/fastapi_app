@@ -3,8 +3,6 @@ import requests
 import re
 from datetime import datetime, timedelta
 from fastapi import FastAPI, APIRouter, HTTPException, Form
-from pydantic import BaseModel, EmailStr
-from passlib.context import CryptContext
 
 # ---------------- Local imports ----------------
 from configuration import collection, news_collection
@@ -16,7 +14,6 @@ app = FastAPI()
 user_router = APIRouter(prefix="/users", tags=["Users"])
 news_router = APIRouter(prefix="/news", tags=["News"])
 report_router = APIRouter(prefix="/report", tags=["Report"])
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # ---------------- Load environment ----------------
 NEWSDATA_API_KEY = os.getenv("NEWSDATA_API_KEY")
@@ -292,9 +289,9 @@ async def verify_news_comprehensive(headline: str = Form(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Verification error: {str(e)}")
 
-# ---------------- KEEP EXISTING USER ROUTES ----------------
+# ---------------- SIMPLIFIED USER ROUTES ----------------
 @user_router.post("/register")
-async def register_user(new_user: User, background_tasks: BackgroundTasks):
+async def register_user(new_user: User):
     email = new_user.email.strip().lower()
     if collection.find_one({"username": new_user.username}):
         raise HTTPException(status_code=400, detail="Username already taken")
@@ -303,18 +300,17 @@ async def register_user(new_user: User, background_tasks: BackgroundTasks):
 
     user_dict = new_user.dict()
     user_dict["email"] = email
-    user_dict["password"] = pwd_context.hash(new_user.password)
+    user_dict["password"] = new_user.password  # Remove hashing for simplicity
     user_dict["created_at"] = datetime.utcnow()
     resp = collection.insert_one(user_dict)
 
-    background_tasks.add_task(lambda: send_welcome_email(email, new_user.full_name))
     return {"status": "success", "id": str(resp.inserted_id), "message": "User registered successfully"}
 
 @user_router.post("/signin")
-async def signin_user(login_user: LoginUser):
+async def signin_user(login_user: User):
     email = login_user.email.strip().lower()
     user_in_db = collection.find_one({"email": email})
-    if not user_in_db or not pwd_context.verify(login_user.password, user_in_db["password"]):
+    if not user_in_db or login_user.password != user_in_db["password"]:
         raise HTTPException(status_code=401, detail="Invalid email or password")
     return {
         "status": "success",
@@ -339,3 +335,7 @@ def health_check():
         "time": datetime.utcnow().isoformat(),
         "message": "Lightweight Fake News Detector API"
     }
+
+@app.get("/")
+def root():
+    return {"message": "Fake News Detector API", "version": "1.0"}
