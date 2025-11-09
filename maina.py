@@ -608,7 +608,7 @@ def get_smart_trending_news(limit: int = 100):
 @news_router.post("/verify-news")
 async def verify_news_comprehensive(headline: str = Form(...)):
     """
-    🔍 COMPREHENSIVE verification with PROPER opposite word detection
+    🔍 COMPREHENSIVE verification that finds RELATED news articles
     """
     start_time = datetime.utcnow()
     
@@ -620,14 +620,93 @@ async def verify_news_comprehensive(headline: str = Form(...)):
         # Step 1: Instant pattern check
         pattern_result = ultra_fast_pattern_check(headline)
         
-        # Step 2: MongoDB check with IMPROVED opposite word detection
-        def improved_mongodb_check(headline: str) -> dict:
+        # Step 2: MongoDB check that finds RELATED articles
+        def find_related_news(headline: str) -> dict:
             try:
-                all_news = list(news_collection.find({}, {"title": 1, "url": 1, "source": 1}).limit(500))
+                # Extract key entities from headline to find related news
+                def extract_key_entities(text):
+                    text_lower = text.lower()
+                    entities = {
+                        "teams": [],
+                        "events": [],
+                        "people": [],
+                        "places": [],
+                        "topics": []
+                    }
+                    
+                    # Common entities to look for
+                    team_keywords = ["india", "australia", "england", "pakistan", "team", "squad"]
+                    event_keywords = ["world cup", "cup", "tournament", "match", "final", "series"]
+                    people_keywords = ["modi", "trump", "putin", "celebrity", "actor", "minister"]
+                    place_keywords = ["delhi", "mumbai", "london", "new york", "city", "country"]
+                    topic_keywords = ["election", "budget", "cricket", "football", "movie", "policy"]
+                    
+                    words = text_lower.split()
+                    
+                    # Check for teams
+                    for word in words:
+                        if word in team_keywords:
+                            entities["teams"].append(word)
+                        if word in people_keywords:
+                            entities["people"].append(word)
+                        if word in place_keywords:
+                            entities["places"].append(word)
+                        if word in topic_keywords:
+                            entities["topics"].append(word)
+                    
+                    # Check for multi-word events
+                    for event in event_keywords:
+                        if event in text_lower:
+                            entities["events"].append(event)
+                    
+                    return entities
 
-                if not all_news:
+                headline_entities = extract_key_entities(headline)
+                
+                # Build search query using entities (find related articles)
+                search_queries = []
+                
+                # Search by teams/people
+                for entity in headline_entities["teams"] + headline_entities["people"]:
+                    search_queries.append({"title": {"$regex": entity, "$options": "i"}})
+                
+                # Search by events
+                for event in headline_entities["events"]:
+                    search_queries.append({"title": {"$regex": event, "$options": "i"}})
+                
+                # Search by topics
+                for topic in headline_entities["topics"]:
+                    search_queries.append({"title": {"$regex": topic, "$options": "i"}})
+                
+                # If no specific entities found, use general search with key words
+                if not search_queries:
+                    key_words = headline.lower().split()[:3]  # Use first 3 words
+                    for word in key_words:
+                        if len(word) > 3:  # Only meaningful words
+                            search_queries.append({"title": {"$regex": word, "$options": "i"}})
+                
+                if not search_queries:
                     return {"found": False, "count": 0, "matches": [], "contradictions": []}
 
+                # Search for related articles
+                all_matches = []
+                for query in search_queries:
+                    try:
+                        matches = list(news_collection.find(query).limit(10))
+                        all_matches.extend(matches)
+                    except:
+                        continue
+                
+                # Remove duplicates
+                seen_titles = set()
+                unique_matches = []
+                for match in all_matches:
+                    title = match.get("title", "").lower()
+                    if title not in seen_titles:
+                        seen_titles.add(title)
+                        unique_matches.append(match)
+                
+                # Analyze matches for similarity and contradictions
                 matches = []
                 contradictions = []
                 headline_lower = headline.lower()
@@ -639,39 +718,54 @@ async def verify_news_comprehensive(headline: str = Form(...)):
                     ("increase", "decrease"), ("rise", "fall"), ("up", "down"),
                     ("approved", "rejected"), ("passed", "failed"),
                     ("alive", "dead"), ("survived", "died"),
-                    ("positive", "negative"), ("good", "bad")
+                    ("positive", "negative"), ("good", "bad"),
+                    ("success", "failure"), ("profit", "loss")
                 ]
 
-                for news in all_news:
+                for news in unique_matches:
                     news_title = news.get("title", "").lower()
                     if not news_title:
                         continue
 
-                    # Calculate similarity
-                    similarity = simple_text_similarity(headline_lower, news_title)
+                    # Calculate similarity based on common context
+                    headline_words = set(headline_lower.split())
+                    news_words = set(news_title.split())
+                    
+                    # Remove common words for better comparison
+                    common_words = {"the", "a", "an", "in", "on", "at", "to", "for", "of", "and", "or", "but"}
+                    headline_clean = headline_words - common_words
+                    news_clean = news_words - common_words
+                    
+                    common_meaningful = headline_clean.intersection(news_clean)
+                    
+                    if not common_meaningful:
+                        continue
+                        
+                    similarity = len(common_meaningful) / max(len(headline_clean), len(news_clean))
 
-                    # Check for opposite words - ONLY if similarity is decent
-                    if similarity > 0.3:
+                    # Only consider if there's meaningful similarity
+                    if similarity > 0.2:  # Lower threshold for related articles
                         has_contradiction = False
                         contradiction_details = []
                         
                         for positive_word, negative_word in opposite_pairs:
-                            # Headline says positive but news says negative
+                            # Headline says positive but related news says negative
                             if positive_word in headline_lower and negative_word in news_title:
                                 has_contradiction = True
-                                contradiction_details.append(f"Headline says '{positive_word}' but news says '{negative_word}'")
+                                contradiction_details.append(f"Headline says '{positive_word}' but related news says '{negative_word}'")
                                 break
-                            # Headline says negative but news says positive
+                            # Headline says negative but related news says positive
                             elif negative_word in headline_lower and positive_word in news_title:
                                 has_contradiction = True
-                                contradiction_details.append(f"Headline says '{negative_word}' but news says '{positive_word}'")
+                                contradiction_details.append(f"Headline says '{negative_word}' but related news says '{positive_word}'")
                                 break
 
                         match_data = {
                             "title": news.get("title", ""),
                             "similarity": round(similarity, 2),
                             "url": news.get("url", ""),
-                            "source": news.get("source", "Unknown")
+                            "source": news.get("source", "Unknown"),
+                            "common_words": list(common_meaningful)[:3]  # Show common context
                         }
 
                         if has_contradiction:
@@ -688,69 +782,52 @@ async def verify_news_comprehensive(headline: str = Form(...)):
                     "found": len(matches) > 0 or len(contradictions) > 0,
                     "count": len(matches),
                     "contradiction_count": len(contradictions),
-                    "matches": matches[:5],
-                    "contradictions": contradictions[:5]
+                    "matches": matches[:8],  # Return more related articles
+                    "contradictions": contradictions[:8],
+                    "entities_found": headline_entities
                 }
 
             except Exception as e:
-                print(f"⚠️ MongoDB check error: {e}")
+                print(f"⚠️ MongoDB related search error: {e}")
                 return {"found": False, "count": 0, "matches": [], "contradictions": []}
 
-        mongodb_result = improved_mongodb_check(headline)
+        mongodb_result = find_related_news(headline)
         
         # Step 3: External news check
         gnews_result = fast_gnews_check(headline)
         
-        # Step 4: IMPROVED CONFIDENCE CALCULATION with contradiction handling
+        # Step 4: CONFIDENCE CALCULATION with related articles
         base_confidence = pattern_result["confidence"]
-        confidence_factors = [base_confidence]
         
-        # Handle contradictions FIRST (they override everything)
+        # Handle contradictions FIRST
         if mongodb_result["contradiction_count"] > 0:
-            # CONTRADICTIONS FOUND - this is likely FAKE
             if mongodb_result["contradiction_count"] >= 2:
                 final_rating = "Fake"
                 final_confidence = min(0.8 + (mongodb_result["contradiction_count"] * 0.1), 0.95)
-                reason = f"Multiple contradictions found ({mongodb_result['contradiction_count']})"
+                reason = f"Multiple contradictions in related news ({mongodb_result['contradiction_count']})"
             else:
                 final_rating = "Likely Fake"
                 final_confidence = 0.7
-                reason = f"Contradictory evidence found"
+                reason = f"Contradictory evidence in related news"
                 
-        # If no contradictions, proceed with normal logic
+        # If no contradictions, check supporting evidence
         elif mongodb_result.get("found") or gnews_result.get("found"):
-            # MongoDB influence
-            if mongodb_result.get("found"):
-                db_boost = 0.15 + (mongodb_result["count"] * 0.05)
-                confidence_factors.append(min(base_confidence + db_boost, 0.9))
+            supporting_count = mongodb_result["count"] + gnews_result.get("count", 0)
             
-            # External news influence
-            if gnews_result.get("found"):
-                external_boost = 0.2 + (gnews_result["count"] * 0.08)
-                if gnews_result.get("trusted_sources", 0) > 0:
-                    external_boost += 0.1
-                confidence_factors.append(min(base_confidence + external_boost, 0.95))
-            
-            # Calculate final score
-            final_confidence = sum(confidence_factors) / len(confidence_factors)
-            final_confidence = min(final_confidence, 0.95)
-            
-            # Determine final rating
-            if gnews_result.get("found") and mongodb_result.get("found"):
+            if supporting_count >= 3:
                 final_rating = "Verified True"
-                reason = "Multiple sources confirm"
-            elif gnews_result.get("found") or mongodb_result.get("found"):
-                if pattern_result["rating"] == "Fake":
-                    final_rating = "Uncertain"
-                    reason = "Mixed evidence"
-                else:
-                    final_rating = "Likely True"
-                    reason = "Some supporting evidence"
+                final_confidence = min(0.8 + (supporting_count * 0.05), 0.95)
+                reason = f"Multiple related news sources confirm ({supporting_count})"
+            elif supporting_count >= 1:
+                final_rating = "Likely True"
+                final_confidence = 0.7
+                reason = f"Some related news evidence found ({supporting_count})"
             else:
                 final_rating = pattern_result["rating"]
+                final_confidence = base_confidence
                 reason = pattern_result["reason"]
         else:
-            # No evidence found
+            # No related evidence found
             final_rating = pattern_result["rating"]
             final_confidence = base_confidence
             reason = pattern_result["reason"]
@@ -765,17 +842,16 @@ async def verify_news_comprehensive(headline: str = Form(...)):
             "confidence": round(final_confidence, 2),
             "reason": reason,
             "response_time_seconds": round(response_time, 2),
-            "sources_checked": {
-                "pattern_analysis": True,
-                "database_matches": mongodb_result.get("count", 0),
-                "database_contradictions": mongodb_result.get("contradiction_count", 0),
-                "external_news": gnews_result.get("count", 0),
-                "trusted_sources": gnews_result.get("trusted_sources", 0)
+            "analysis": {
+                "pattern_analysis": pattern_result,
+                "related_news_found": mongodb_result.get("count", 0),
+                "contradictions_found": mongodb_result.get("contradiction_count", 0),
+                "external_sources": gnews_result.get("count", 0),
+                "entities_used": mongodb_result.get("entities_found", {})
             },
             "evidence": {
-                "pattern_result": pattern_result,
-                "supporting_matches": mongodb_result.get("matches", []),
-                "contradictory_matches": mongodb_result.get("contradictions", []),
+                "supporting_articles": mongodb_result.get("matches", []),
+                "contradictory_articles": mongodb_result.get("contradictions", []),
                 "external_articles": gnews_result.get("articles", [])
             },
             "message": f"Analysis: {final_rating} ({final_confidence*100}% confidence) - {reason}"
