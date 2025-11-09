@@ -608,8 +608,7 @@ def get_smart_trending_news(limit: int = 100):
 @news_router.post("/verify-news")
 async def verify_news_comprehensive(headline: str = Form(...)):
     """
-    🔍 COMPREHENSIVE verification - pattern + DB + external news
-    Response time: 3-5 seconds
+    🔍 COMPREHENSIVE verification with PROPER opposite word detection
     """
     start_time = datetime.utcnow()
     
@@ -621,42 +620,141 @@ async def verify_news_comprehensive(headline: str = Form(...)):
         # Step 1: Instant pattern check
         pattern_result = ultra_fast_pattern_check(headline)
         
-        # Step 2: MongoDB check
-        mongodb_result = full_mongodb_check(headline)
+        # Step 2: MongoDB check with IMPROVED opposite word detection
+        def improved_mongodb_check(headline: str) -> dict:
+            try:
+                all_news = list(news_collection.find({}, {"title": 1, "url": 1, "source": 1}).limit(500))
+
+                if not all_news:
+                    return {"found": False, "count": 0, "matches": [], "contradictions": []}
+
+                matches = []
+                contradictions = []
+                headline_lower = headline.lower()
+
+                # IMPROVED OPPOSITE WORDS DETECTION
+                opposite_pairs = [
+                    ("won", "lost"), ("win", "lose"), ("victory", "defeat"),
+                    ("champion", "runner-up"), ("beat", "lost to"), 
+                    ("increase", "decrease"), ("rise", "fall"), ("up", "down"),
+                    ("approved", "rejected"), ("passed", "failed"),
+                    ("alive", "dead"), ("survived", "died"),
+                    ("positive", "negative"), ("good", "bad")
+                ]
+
+                for news in all_news:
+                    news_title = news.get("title", "").lower()
+                    if not news_title:
+                        continue
+
+                    # Calculate similarity
+                    similarity = simple_text_similarity(headline_lower, news_title)
+
+                    # Check for opposite words - ONLY if similarity is decent
+                    if similarity > 0.3:
+                        has_contradiction = False
+                        contradiction_details = []
+                        
+                        for positive_word, negative_word in opposite_pairs:
+                            # Headline says positive but news says negative
+                            if positive_word in headline_lower and negative_word in news_title:
+                                has_contradiction = True
+                                contradiction_details.append(f"Headline says '{positive_word}' but news says '{negative_word}'")
+                                break
+                            # Headline says negative but news says positive
+                            elif negative_word in headline_lower and positive_word in news_title:
+                                has_contradiction = True
+                                contradiction_details.append(f"Headline says '{negative_word}' but news says '{positive_word}'")
+                                break
+
+                        match_data = {
+                            "title": news.get("title", ""),
+                            "similarity": round(similarity, 2),
+                            "url": news.get("url", ""),
+                            "source": news.get("source", "Unknown")
+                        }
+
+                        if has_contradiction:
+                            match_data["contradiction_reason"] = contradiction_details[0]
+                            contradictions.append(match_data)
+                        else:
+                            matches.append(match_data)
+
+                # Sort by similarity
+                matches.sort(key=lambda x: x["similarity"], reverse=True)
+                contradictions.sort(key=lambda x: x["similarity"], reverse=True)
+
+                return {
+                    "found": len(matches) > 0 or len(contradictions) > 0,
+                    "count": len(matches),
+                    "contradiction_count": len(contradictions),
+                    "matches": matches[:5],
+                    "contradictions": contradictions[:5]
+                }
+
+            except Exception as e:
+                print(f"⚠️ MongoDB check error: {e}")
+                return {"found": False, "count": 0, "matches": [], "contradictions": []}
+
+        mongodb_result = improved_mongodb_check(headline)
         
         # Step 3: External news check
         gnews_result = fast_gnews_check(headline)
         
-        # Step 4: Calculate comprehensive confidence
-        confidence_factors = [pattern_result["confidence"]]
+        # Step 4: IMPROVED CONFIDENCE CALCULATION with contradiction handling
+        base_confidence = pattern_result["confidence"]
+        confidence_factors = [base_confidence]
         
-        # MongoDB influence
-        if mongodb_result.get("found"):
-            db_boost = 0.15 + (mongodb_result["count"] * 0.05)
-            confidence_factors.append(min(pattern_result["confidence"] + db_boost, 0.9))
-        
-        # External news influence
-        if gnews_result.get("found"):
-            external_boost = 0.2 + (gnews_result["count"] * 0.08)
-            if gnews_result.get("trusted_sources", 0) > 0:
-                external_boost += 0.1  # Extra boost for trusted domains
-            confidence_factors.append(min(pattern_result["confidence"] + external_boost, 0.95))
-        
-        # Calculate final score
-        final_confidence = sum(confidence_factors) / len(confidence_factors)
-        final_confidence = min(final_confidence, 0.95)
-        
-        # Determine final rating
-        if gnews_result.get("found") and mongodb_result.get("found"):
-            final_rating = "Verified True"
-        elif gnews_result.get("found") or mongodb_result.get("found"):
-            if pattern_result["rating"] == "Fake":
-                final_rating = "Contradictory - verify manually"
+        # Handle contradictions FIRST (they override everything)
+        if mongodb_result["contradiction_count"] > 0:
+            # CONTRADICTIONS FOUND - this is likely FAKE
+            if mongodb_result["contradiction_count"] >= 2:
+                final_rating = "Fake"
+                final_confidence = min(0.8 + (mongodb_result["contradiction_count"] * 0.1), 0.95)
+                reason = f"Multiple contradictions found ({mongodb_result['contradiction_count']})"
             else:
-                final_rating = "Likely True"
+                final_rating = "Likely Fake"
+                final_confidence = 0.7
+                reason = f"Contradictory evidence found"
+                
+        # If no contradictions, proceed with normal logic
+        elif mongodb_result.get("found") or gnews_result.get("found"):
+            # MongoDB influence
+            if mongodb_result.get("found"):
+                db_boost = 0.15 + (mongodb_result["count"] * 0.05)
+                confidence_factors.append(min(base_confidence + db_boost, 0.9))
+            
+            # External news influence
+            if gnews_result.get("found"):
+                external_boost = 0.2 + (gnews_result["count"] * 0.08)
+                if gnews_result.get("trusted_sources", 0) > 0:
+                    external_boost += 0.1
+                confidence_factors.append(min(base_confidence + external_boost, 0.95))
+            
+            # Calculate final score
+            final_confidence = sum(confidence_factors) / len(confidence_factors)
+            final_confidence = min(final_confidence, 0.95)
+            
+            # Determine final rating
+            if gnews_result.get("found") and mongodb_result.get("found"):
+                final_rating = "Verified True"
+                reason = "Multiple sources confirm"
+            elif gnews_result.get("found") or mongodb_result.get("found"):
+                if pattern_result["rating"] == "Fake":
+                    final_rating = "Uncertain"
+                    reason = "Mixed evidence"
+                else:
+                    final_rating = "Likely True"
+                    reason = "Some supporting evidence"
+            else:
+                final_rating = pattern_result["rating"]
+                reason = pattern_result["reason"]
         else:
+            # No evidence found
             final_rating = pattern_result["rating"]
-        
+            final_confidence = base_confidence
+            reason = pattern_result["reason"]
+
         response_time = (datetime.utcnow() - start_time).total_seconds()
 
         return {
@@ -665,24 +763,27 @@ async def verify_news_comprehensive(headline: str = Form(...)):
             "headline": headline,
             "rating": final_rating,
             "confidence": round(final_confidence, 2),
+            "reason": reason,
             "response_time_seconds": round(response_time, 2),
             "sources_checked": {
                 "pattern_analysis": True,
                 "database_matches": mongodb_result.get("count", 0),
+                "database_contradictions": mongodb_result.get("contradiction_count", 0),
                 "external_news": gnews_result.get("count", 0),
                 "trusted_sources": gnews_result.get("trusted_sources", 0)
             },
             "evidence": {
                 "pattern_result": pattern_result,
-                "database_matches": mongodb_result.get("matches", []),
+                "supporting_matches": mongodb_result.get("matches", []),
+                "contradictory_matches": mongodb_result.get("contradictions", []),
                 "external_articles": gnews_result.get("articles", [])
             },
-            "message": f"Analysis completed in {response_time:.1f}s: {final_rating} ({final_confidence*100}% confidence)"
+            "message": f"Analysis: {final_rating} ({final_confidence*100}% confidence) - {reason}"
         }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Verification error: {str(e)}")
-
+        
 # ---------------- Traveller Updates (Local DB only) ----------------
 @news_router.get("/traveller-updates")
 def traveller_updates(location: str = Query(..., description="City or country name")):
