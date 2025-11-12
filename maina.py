@@ -525,13 +525,15 @@ def get_news_by_category(category: str, language: str = "en", limit: int = 50):
         n["_id"] = str(n["_id"])
     return {"count": len(news), "articles": news}
 
+news_collection.create_index([("createdAt", DESCENDING)])
+
 @news_router.get("/all")
-def get_all_news():
-    news = list(news_collection.find().sort("createdAt", -1))
+def get_all_news(limit: int = 1000):
+    news = list(news_collection.find().sort("createdAt", DESCENDING).limit(limit))
     for n in news:
         n["_id"] = str(n["_id"])
     return {"count": len(news), "articles": news}
-
+    
 @news_router.get("/refresh")
 def refresh_news(secret: str = Query(...)):
     if secret != CRON_SECRET:
