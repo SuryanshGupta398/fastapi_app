@@ -14,6 +14,7 @@ from sklearn.linear_model import SGDClassifier
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics import accuracy_score
 from sklearn.preprocessing import LabelEncoder
+from pymongo import DESCENDING 
 
 # ---------------- Local imports ----------------
 from configuration import collection, news_collection
