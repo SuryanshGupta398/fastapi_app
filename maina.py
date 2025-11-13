@@ -568,27 +568,62 @@ def get_smart_trending_news(limit: int = 100):
     try:
         now = datetime.utcnow()
         last_7_days = now - timedelta(days=7)
-        recent_news = list(news_collection.find({"createdAt": {"$gte": last_7_days}}).limit(300))
+
+        # Fetch recent 7-day news, focusing on potentially trending topics
+        recent_news = list(
+            news_collection.find(
+                {"createdAt": {"$gte": last_7_days}},
+                {"_id": 1, "title": 1, "description": 1, "views": 1,
+                 "shares": 1, "likes": 1, "category": 1,
+                 "createdAt": 1, "image_url": 1, "source": 1}
+            ).limit(400)
+        )
 
         trending = []
         for n in recent_news:
             views = n.get("views", 0)
+            shares = n.get("shares", 0)
+            likes = n.get("likes", 0)
             title = n.get("title", "").lower()
             created_at = n.get("createdAt", now)
+
+            # Hours since publication
             hours_old = (now - created_at).total_seconds() / 3600
 
-            recency_boost = max(0, int(168 - hours_old)) // 8
-            keyword_boost = 20 if any(kw in title for kw in TRENDING_KEYWORDS) else 0
-            score = (views * 2.5) + keyword_boost + recency_boost
+            # Recency boost (fresh content gets more weight)
+            recency_boost = max(0, 150 - hours_old) / 10
 
-            n["trending_score"] = score
+            # Keyword importance
+            keyword_boost = 25 if any(kw in title for kw in TRENDING_KEYWORDS) else 0
+
+            # Engagement weight — gives importance to viral stories
+            engagement_score = (views * 1.5) + (shares * 3) + (likes * 2)
+
+            # Combine to form smart trending score
+            trending_score = engagement_score + recency_boost + keyword_boost
+
+            n["trending_score"] = round(trending_score, 2)
             n["_id"] = str(n["_id"])
             trending.append(n)
 
+        # Sort and limit
         trending = sorted(trending, key=lambda x: x["trending_score"], reverse=True)[:limit]
-        return {"status": "success", "count": len(trending), "articles": trending}
+
+        # Optional: highlight top 5 with tag for UI
+        for i, news in enumerate(trending[:5]):
+            news["highlight"] = True
+
+        return {
+            "status": "success",
+            "count": len(trending),
+            "articles": trending
+        }
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching smart trending news: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error fetching smart trending news: {str(e)}"
+        )
 
 # ---------------- Verify News Route (Google Fact Check API) ----------------
 # ---------------- Verify News Route (Integrated: Google Fact Check + Local DB) ----------------
