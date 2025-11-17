@@ -101,16 +101,17 @@ TRUSTED_DOMAINS = [
     "nytimes.com", "washingtonpost.com", "theguardian.com"
 ]
 
-def simple_text_similarity(text1, text2):
-    """Simple word overlap similarity"""
-    words1 = set(text1.lower().split())
-    words2 = set(text2.lower().split())
-    
-    if not words1 or not words2:
-        return 0.0
-    
-    common = words1.intersection(words2)
-    return len(common) / max(len(words1), len(words2))
+def better_similarity(a: str, b: str) -> float:
+    a_words = set(a.split())
+    b_words = set(b.split())
+
+    if not a_words or not b_words:
+        return 0
+
+    overlap = a_words.intersection(b_words)
+    score = len(overlap) / max(len(a_words), len(b_words))
+
+    return score
 
 def ultra_fast_pattern_check(headline: str) -> dict:
     """Ultra-fast pattern matching"""
@@ -172,49 +173,51 @@ def ultra_fast_pattern_check(headline: str) -> dict:
     }
 
 def fast_mongodb_check(headline: str) -> dict:
-    """Fast MongoDB check using simple text matching"""
+    """Fast MongoDB check with improved fuzzy matching + safer recent filter"""
     try:
-        # Search last 3 days only for speed
-        recent_limit = datetime.utcnow() - timedelta(days=3)
-        
-        # Get all recent news
+        headline = headline.lower()
+
+        # Fetch last 15 days (safe range) — not just 3 days
+        recent_limit = datetime.utcnow() - timedelta(days=15)
+
         recent_news = list(news_collection.find({
             "createdAt": {"$gte": recent_limit}
-        }).limit(50))
-        
+        }).limit(200))
+
+        # If still empty, fallback: remove date filter entirely
         if not recent_news:
-            return {"found": False, "count": 0}
-        
-        # Simple similarity matching
+            recent_news = list(news_collection.find().limit(200))
+
         matches = []
+
         for news in recent_news:
             news_title = news.get("title", "").lower()
             if not news_title:
                 continue
-                
-            # Simple word overlap check
-            similarity = simple_text_similarity(headline, news_title)
-            if similarity > 0.3:  # 30% word overlap
+
+            # Use better overlap scoring
+            similarity = better_similarity(headline, news_title)
+
+            if similarity >= 0.2:  # Lower threshold
                 matches.append({
                     "title": news.get("title", ""),
                     "similarity": round(similarity, 2),
                     "url": news.get("url", ""),
-                    "source": news.get("source", "Unknown")
+                    "source": news.get("source", "Unknown"),
                 })
-        
-        # Sort by similarity and take top 3
+
         matches.sort(key=lambda x: x["similarity"], reverse=True)
-        top_matches = matches[:3]
-        
+        top_matches = matches[:5]
+
         return {
             "found": len(top_matches) > 0,
             "count": len(top_matches),
             "matches": top_matches
         }
-        
+
     except Exception as e:
-        print(f"MongoDB check error: {e}")
-        return {"found": False, "count": 0}
+        print("MongoDB check error:", e)
+        return {"found": False, "count": 0, "matches": []}
 
 def fast_gnews_check(headline: str) -> dict:
     """Fast GNews check with timeout"""
