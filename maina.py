@@ -1,6 +1,7 @@
 import os
 import re
 import requests
+import uvicorn
 import pandas as pd
 from datetime import datetime, timedelta
 import random
@@ -61,7 +62,10 @@ CATEGORY_KEYWORDS = {
     "Health": ["disease", "medicine", "vaccine", "hospital", "covid", "health"],
     "Politics": ["election", "government", "minister", "policy", "vote"]
 }
-
+if __name__ == "maina":
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
+    
 def categorize_with_keywords(text: str, predicted: str) -> str:
     text_lower = text.lower()
     for cat, keywords in CATEGORY_KEYWORDS.items():
