@@ -15,6 +15,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics import accuracy_score
 from sklearn.preprocessing import LabelEncoder
 from pymongo import DESCENDING 
+from sentence_transformers import SentenceTransformer, util
 
 # ---------------- Local imports ----------------
 from configuration import collection, news_collection
@@ -28,6 +29,7 @@ news_router = APIRouter(prefix="/news", tags=["News"])
 report_router = APIRouter(prefix="/report", tags=["Report"])
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+semantic_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
 # ---------------- Load environment ----------------
 NEWSDATA_API_KEY = os.getenv("NEWSDATA_API_KEY")
@@ -100,6 +102,9 @@ TRUSTED_DOMAINS = [
     "reuters.com", "ap.org", "bbc.com", "bbc.co.uk", "aljazeera.com",
     "nytimes.com", "washingtonpost.com", "theguardian.com"
 ]
+
+def get_semantic_embedding(text: str):
+    return semantic_model.encode(text, convert_to_tensor=True)
 
 def better_similarity(a: str, b: str) -> float:
     a_words = set(a.split())
@@ -218,6 +223,35 @@ def fast_mongodb_check(headline: str) -> dict:
     except Exception as e:
         print("MongoDB check error:", e)
         return {"found": False, "count": 0, "matches": []}
+
+def semantic_mongo_search(headline: str, top_k: int = 5):
+    query_emb = semantic_model.encode(headline, convert_to_tensor=True)
+
+    # Fetch last 15 days news
+    recent_limit = datetime.utcnow() - timedelta(days=15)
+    docs = list(news_collection.find(
+        {"embedding": {"$exists": True},
+         "createdAt": {"$gte": recent_limit}},
+        {"title": 1, "url": 1, "source": 1, "embedding": 1}
+    ))
+
+    if not docs:
+        docs = list(news_collection.find({"embedding": {"$exists": True}}))
+
+    # Compute similarity
+    scores = []
+    for d in docs:
+        emb = np.array(d["embedding"])
+        sim = util.cos_sim(query_emb, emb).item()
+        scores.append({
+            "title": d.get("title", ""),
+            "url": d.get("url", ""),
+            "source": d.get("source", "Unknown"),
+            "similarity": round(float(sim), 3)
+        })
+
+    scores.sort(key=lambda x: x["similarity"], reverse=True)
+    return scores[:top_k]
 
 def fast_gnews_check(headline: str) -> dict:
     """Fast GNews check with timeout"""
@@ -489,11 +523,14 @@ def fetch_and_store_news(lang="en", pages=2):
         y_pred = model.predict(X_vec)
         category = label_encoder.inverse_transform(y_pred)[0]
         category = categorize_with_keywords(title, category)
+        embedding = semantic_model.encode(title).tolist()
         doc = {
             **a,
             "category": category,
-            "createdAt": datetime.utcnow()
+            "createdAt": datetime.utcnow(),
+            "embedding": embedding           # <--- store semantic vector
         }
+
         try:
             news_collection.insert_one(doc)
             inserted_total += 1
@@ -631,82 +668,110 @@ def get_smart_trending_news(limit: int = 100):
 # ---------------- Verify News Route (Google Fact Check API) ----------------
 # ---------------- Verify News Route (Integrated: Google Fact Check + Local DB) ----------------
 @news_router.post("/verify-news")
-async def verify_news_comprehensive(headline: str = Form(...)):
+async def verify_news_comprehensive_all(headline: str = Form(...)):
     """
-    🔍 COMPREHENSIVE verification - pattern + DB + external news
-    Response time: 3-5 seconds
+    Comprehensive news verification:
+    - Pattern check
+    - MongoDB exact/fuzzy match
+    - MongoDB semantic search
+    - GNews check
+    - NewsData.io check
     """
     start_time = datetime.utcnow()
-    
-    try:
-        headline = headline.strip()
-        if not headline:
-            raise HTTPException(status_code=400, detail="Headline required")
+    headline = headline.strip()
+    if not headline:
+        raise HTTPException(status_code=400, detail="Headline required")
 
-        # Step 1: Instant pattern check
-        pattern_result = ultra_fast_pattern_check(headline)
-        
-        # Step 2: MongoDB check
-        mongodb_result = fast_mongodb_check(headline)
-        
-        # Step 3: External news check
-        gnews_result = fast_gnews_check(headline)
-        
-        # Step 4: Calculate comprehensive confidence
-        confidence_factors = [pattern_result["confidence"]]
-        
-        # MongoDB influence
-        if mongodb_result.get("found"):
-            db_boost = 0.15 + (mongodb_result["count"] * 0.05)
-            confidence_factors.append(min(pattern_result["confidence"] + db_boost, 0.9))
-        
-        # External news influence
-        if gnews_result.get("found"):
-            external_boost = 0.2 + (gnews_result["count"] * 0.08)
-            if gnews_result.get("trusted_sources", 0) > 0:
-                external_boost += 0.1  # Extra boost for trusted domains
-            confidence_factors.append(min(pattern_result["confidence"] + external_boost, 0.95))
-        
-        # Calculate final score
-        final_confidence = sum(confidence_factors) / len(confidence_factors)
-        final_confidence = min(final_confidence, 0.95)
-        
-        # Determine final rating
-        if gnews_result.get("found") and mongodb_result.get("found"):
-            final_rating = "Verified True"
-        elif gnews_result.get("found") or mongodb_result.get("found"):
-            if pattern_result["rating"] == "Fake":
-                final_rating = "Contradictory - verify manually"
-            else:
-                final_rating = "Likely True"
+    # 1️⃣ Pattern check
+    pattern_result = ultra_fast_pattern_check(headline)
+
+    # 2️⃣ MongoDB exact/fuzzy check
+    mongodb_result = fast_mongodb_check(headline)
+
+    # 3️⃣ Semantic search in MongoDB
+    semantic_results = semantic_mongo_search(headline, top_k=5)  # top 5 similar
+
+    # 4️⃣ External GNews check
+    gnews_result = fast_gnews_check(headline)
+
+    # 5️⃣ NewsData.io check
+    newsdata_results = []
+    if NEWSDATA_API_KEY:
+        try:
+            search_terms = "+".join(headline.split()[:5])  # first 5 words
+            url = f"https://newsdata.io/api/1/news?q={search_terms}&apikey={NEWSDATA_API_KEY}&language=en&country=in"
+            resp = requests.get(url, timeout=5)
+            if resp.status_code == 200:
+                data = resp.json()
+                articles = data.get("results", [])[:3]  # top 3
+                for a in articles:
+                    newsdata_results.append({
+                        "title": a.get("title"),
+                        "description": a.get("description"),
+                        "url": a.get("link"),
+                        "source": a.get("source_id"),
+                        "publishedAt": a.get("pubDate")
+                    })
+        except Exception as e:
+            print("⚠️ NewsData.io check failed:", e)
+
+    # 6️⃣ Calculate final confidence
+    confidence_factors = [pattern_result["confidence"]]
+    if mongodb_result.get("found"):
+        db_boost = 0.15 + (mongodb_result["count"] * 0.05)
+        confidence_factors.append(min(pattern_result["confidence"] + db_boost, 0.9))
+    if semantic_results:
+        semantic_boost = 0.2 + (len(semantic_results) * 0.05)
+        confidence_factors.append(min(pattern_result["confidence"] + semantic_boost, 0.95))
+    if gnews_result.get("found"):
+        external_boost = 0.2 + (gnews_result["count"] * 0.08)
+        if gnews_result.get("trusted_sources", 0) > 0:
+            external_boost += 0.1
+        confidence_factors.append(min(pattern_result["confidence"] + external_boost, 0.95))
+    if newsdata_results:
+        nd_boost = 0.1 + (len(newsdata_results) * 0.05)
+        confidence_factors.append(min(pattern_result["confidence"] + nd_boost, 0.95))
+
+    final_confidence = sum(confidence_factors) / len(confidence_factors)
+    final_confidence = min(final_confidence, 0.95)
+
+    # 7️⃣ Determine final rating
+    if (gnews_result.get("found") or newsdata_results) and (mongodb_result.get("found") or semantic_results):
+        final_rating = "Verified True"
+    elif gnews_result.get("found") or semantic_results or mongodb_result.get("found") or newsdata_results:
+        if pattern_result["rating"] == "Fake":
+            final_rating = "Contradictory - verify manually"
         else:
-            final_rating = pattern_result["rating"]
-        
-        response_time = (datetime.utcnow() - start_time).total_seconds()
+            final_rating = "Likely True"
+    else:
+        final_rating = pattern_result["rating"]
 
-        return {
-            "status": "success",
-            "verified": final_rating in ["Verified True", "Likely True", "True"],
-            "headline": headline,
-            "rating": final_rating,
-            "confidence": round(final_confidence, 2),
-            "response_time_seconds": round(response_time, 2),
-            "sources_checked": {
-                "pattern_analysis": True,
-                "database_matches": mongodb_result.get("count", 0),
-                "external_news": gnews_result.get("count", 0),
-                "trusted_sources": gnews_result.get("trusted_sources", 0)
-            },
-            "evidence": {
-                "pattern_result": pattern_result,
-                "database_matches": mongodb_result.get("matches", []),
-                "external_articles": gnews_result.get("articles", [])
-            },
-            "message": f"Analysis completed in {response_time:.1f}s: {final_rating} ({final_confidence*100}% confidence)"
-        }
+    response_time = (datetime.utcnow() - start_time).total_seconds()
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Verification error: {str(e)}")
+    return {
+        "status": "success",
+        "verified": final_rating in ["Verified True", "Likely True", "True"],
+        "headline": headline,
+        "rating": final_rating,
+        "confidence": round(final_confidence, 2),
+        "response_time_seconds": round(response_time, 2),
+        "sources_checked": {
+            "pattern_analysis": True,
+            "database_matches": mongodb_result.get("count", 0),
+            "semantic_matches": len(semantic_results),
+            "gnews_matches": gnews_result.get("count", 0),
+            "trusted_sources": gnews_result.get("trusted_sources", 0),
+            "newsdata_matches": len(newsdata_results)
+        },
+        "evidence": {
+            "pattern_result": pattern_result,
+            "database_matches": mongodb_result.get("matches", []),
+            "semantic_matches": semantic_results,
+            "gnews_articles": gnews_result.get("articles", []),
+            "newsdata_articles": newsdata_results
+        },
+        "message": f"Analysis completed in {response_time:.1f}s: {final_rating} ({final_confidence*100}% confidence)"
+    }
 
 # ---------------- Traveller Updates (Local DB only) ----------------
 @news_router.get("/traveller-updates")
