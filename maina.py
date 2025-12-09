@@ -434,7 +434,7 @@ def fetch_and_store_news(lang="en", pages=2):
     newsdata_url = f"https://newsdata.io/api/1/news?apikey={NEWS_API_KEY}&country=in&language={lang}"
     page_count = 0
     while newsdata_url and page_count < pages:
-        resp = requests.get(newsdata_url, timeout=50)
+        resp = requests.get(newsdata_url, timeout=100)
         if resp.status_code != 200:
             break
         data = resp.json()
@@ -462,7 +462,7 @@ def fetch_and_store_news(lang="en", pages=2):
     # ---------------- Fetch from GNews ----------------
     try:
         gnews_url = f"https://gnews.io/api/v4/top-headlines?lang={lang}&country=in&max=50&apikey={GNEWS_API_KEY}"
-        g_resp = requests.get(gnews_url, timeout=50)
+        g_resp = requests.get(gnews_url, timeout=100)
         if g_resp.status_code == 200:
             g_data = g_resp.json()
             for a in g_data.get("articles", []):
