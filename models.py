@@ -6,7 +6,8 @@ class User(BaseModel):
     full_name: str
     username: str
     email: EmailStr
-    password: str   # in real apps, store hashed password
+    password: Optional[str] = None      # optional for Google users
+    is_google_user: bool = False        # flag to mark Google users
     created_at: Optional[datetime] = None
 class LoginUser(BaseModel):
     email: EmailStr
