@@ -334,18 +334,26 @@ otp_store = {}
 @user_router.post("/register")
 async def register_user(new_user: User, background_tasks: BackgroundTasks):
     email = new_user.email.strip().lower()
-    if collection.find_one({"username": new_user.username}):
-        raise HTTPException(status_code=400, detail="Username already taken")
-    if collection.find_one({"email": email}):
-        raise HTTPException(status_code=400, detail="Email already registered")
+
+    existing_user = collection.find_one({"email": email})
+    if existing_user:
+        if new_user.is_google_user:
+            return {"status": "success", "id": str(existing_user["_id"]), "message": "Google user logged in"}
+        else:
+            raise HTTPException(status_code=400, detail="Email already registered")
 
     user_dict = new_user.dict()
     user_dict["email"] = email
-    user_dict["password"] = pwd_context.hash(new_user.password)
     user_dict["created_at"] = datetime.utcnow()
-    resp = collection.insert_one(user_dict)
 
+    if new_user.password and not new_user.is_google_user:
+        user_dict["password"] = pwd_context.hash(new_user.password)
+    else:
+        user_dict["password"] = new_user.password or ""
+
+    resp = collection.insert_one(user_dict)
     background_tasks.add_task(lambda: send_welcome_email(email, new_user.full_name))
+
     return {"status": "success", "id": str(resp.inserted_id), "message": "User registered successfully"}
 
 @user_router.post("/signin")
