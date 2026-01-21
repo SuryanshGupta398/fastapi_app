@@ -350,7 +350,12 @@ async def register_user(new_user: User, background_tasks: BackgroundTasks):
         user_dict["password"] = pwd_context.hash(new_user.password)
     else:
         user_dict["password"] = new_user.password or ""
-
+    if ADMIN_EMAIL and email == ADMIN_EMAIL.lower():
+        user_dict["role"] = "ADMIN"
+    else:
+        user_dict["role"] = "USER"
+    
+    user_dict["is_blocked"] = False
     resp = collection.insert_one(user_dict)
     background_tasks.add_task(lambda: send_welcome_email(email, new_user.full_name))
 
@@ -359,17 +364,69 @@ async def register_user(new_user: User, background_tasks: BackgroundTasks):
 @user_router.post("/signin")
 async def signin_user(login_user: LoginUser):
     email = login_user.email.strip().lower()
-    user_in_db = collection.find_one({"email": email})
-    if not user_in_db or not pwd_context.verify(login_user.password, user_in_db["password"]):
-        raise HTTPException(status_code=401, detail="Invalid email or password")
+    user = collection.find_one({"email": email})
+
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    if user.get("is_blocked"):
+        raise HTTPException(status_code=403, detail="Account blocked by admin")
+
+    if not pwd_context.verify(login_user.password, user["password"]):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    # 🕒 UPDATE LAST LOGIN
+    collection.update_one(
+        {"email": email},
+        {"$set": {"last_login": datetime.utcnow().isoformat()}}
+    )
+
     return {
         "status": "success",
-        "message": "Login successful",
         "user": {
-            "full_name": user_in_db.get("full_name", ""),
-            "username": user_in_db.get("username", ""),
-            "email": user_in_db["email"]
+            "full_name": user.get("full_name"),
+            "email": user["email"],
+            "role": user.get("role", "USER"),
+            "last_login": user.get("last_login")
         }
+    }
+@user_router.get("/admin/users")
+def get_all_users(admin_email: EmailStr = Query(...)):
+    admin = collection.find_one({"email": admin_email.lower()})
+
+    if not admin or admin.get("role") != "ADMIN":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    users = []
+    for u in collection.find({}, {"password": 0}):
+        u["_id"] = str(u["_id"])
+        users.append(u)
+
+    return {"count": len(users), "users": users}
+
+@user_router.put("/admin/block-user")
+def block_user(
+    admin_email: EmailStr,
+    target_email: EmailStr,
+    block: bool = True
+):
+    admin = collection.find_one({"email": admin_email.lower()})
+
+    if not admin or admin.get("role") != "ADMIN":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    result = collection.update_one(
+        {"email": target_email.lower()},
+        {"$set": {"is_blocked": block}}
+    )
+
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    return {
+        "status": "success",
+        "blocked": block,
+        "user": target_email
     }
 
 # ---------------- Forgot Password / Reset ----------------
