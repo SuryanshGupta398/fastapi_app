@@ -391,6 +391,45 @@ async def signin_user(login_user: LoginUser):
             "last_login": user.get("last_login")
         }
     }
+
+@user_router.get("/check-google-login")
+def check_google_login(email: EmailStr = Query(...)):
+    """
+    ✅ Check if Google user exists.
+    Returns full user info if exists, else error.
+    If user is blocked, returns a blocked message.
+    """
+    email_lower = email.lower()
+    user = collection.find_one({"email": email_lower}, {"password": 0})  # hide password
+
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found. Please sign up.")
+
+    if user.get("is_blocked", False):
+        raise HTTPException(status_code=403, detail="You are blocked by admin.")
+
+    # Ensure all expected fields exist
+    user_data = {
+        "full_name": user.get("full_name", ""),
+        "username": user.get("username", ""),
+        "email": user.get("email", ""),
+        "password": user.get("password", None),  # optional
+        "is_google_user": user.get("is_google_user", False),
+        "profile_image": user.get("profile_image", None),
+        "role": user.get("role", "USER"),
+        "is_blocked": user.get("is_blocked", False),
+        "last_login": user.get("last_login", None)
+    }
+
+    # Update last login timestamp
+    collection.update_one(
+        {"email": email_lower},
+        {"$set": {"last_login": datetime.utcnow().isoformat()}}
+    )
+
+    return {"status": "success", "user": user_data}
+
+
 @user_router.get("/admin/users")
 def get_all_users(admin_email: EmailStr = Query(...)):
     admin = collection.find_one({"email": admin_email.lower()})
