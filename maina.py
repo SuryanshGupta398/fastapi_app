@@ -339,7 +339,28 @@ async def register_user(new_user: User, background_tasks: BackgroundTasks):
     existing_user = collection.find_one({"email": email})
     if existing_user:
         if new_user.is_google_user:
-            return {"status": "success", "id": str(existing_user["_id"]), "message": "Google user logged in"}
+            
+            if existing_user.get("is_blocked", False):
+                raise HTTPException(status_code=403, detail="You are blocked by admin.")
+                
+            collection.update_one(
+                {"_id": existing_user["_id"]},
+                {"$set": {"last_login": datetime.utcnow().isoformat()}}
+            )
+            return {
+                "status": "success",
+                "message": "Google user logged in",
+                "user": {
+                    "full_name": existing_user.get("full_name", ""),
+                    "username": existing_user.get("username", ""),
+                    "email": existing_user.get("email", ""),
+                    "is_google_user": existing_user.get("is_google_user", True),
+                    "profile_image": existing_user.get("profile_image"),
+                    "role": existing_user.get("role", "USER"),
+                    "is_blocked": existing_user.get("is_blocked", False),
+                    "last_login": existing_user.get("last_login")
+                }
+            }
         else:
             raise HTTPException(status_code=400, detail="Email already registered")
 
