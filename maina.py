@@ -330,6 +330,7 @@ async def send_otp_email(email: str, otp: str):
 
 otp_store = {}
 
+ADMIN_EMAIL=os.getenv("MAIL_FROM")
 # ---------------- User Routes ----------------
 @user_router.post("/register")
 async def register_user(new_user: User, background_tasks: BackgroundTasks):
