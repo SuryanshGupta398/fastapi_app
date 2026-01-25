@@ -452,19 +452,40 @@ def check_google_login(email: EmailStr = Query(...)):
 
 
 @user_router.get("/admin/users")
-def get_all_users(admin_email: EmailStr = Query(...)):
+def get_users_paginated(
+    admin_email: EmailStr = Query(...),
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100)
+):
+    # 🔐 Admin check
     admin = collection.find_one({"email": admin_email.lower()})
-
     if not admin or admin.get("role") != "ADMIN":
         raise HTTPException(status_code=403, detail="Admin only")
 
+    skip = (page - 1) * size
+
+    cursor = (
+        collection.find({}, {"password": 0})
+        .sort("created_at", DESCENDING)
+        .skip(skip)
+        .limit(size)
+    )
+
     users = []
-    for u in collection.find({}, {"password": 0}):
+    for u in cursor:
         u["_id"] = str(u["_id"])
         users.append(u)
 
-    return {"count": len(users), "users": users}
+    total_users = collection.count_documents({})
 
+    return {
+        "page": page,
+        "size": size,
+        "total": total_users,
+        "users": users,
+        "has_more": skip + size < total_users
+    }
+    
 @user_router.put("/admin/block-user")
 def block_user(
     admin_email: EmailStr,
