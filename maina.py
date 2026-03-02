@@ -695,15 +695,15 @@ def refresh_news(secret: str = Query(...)):
     fetch_and_store_news("hi")
 
     news_docs = list(news_collection.find({"category": {"$exists": True}}))
-    if news_docs:
+    # if news_docs:
     #     X_test = [doc["title"] for doc in news_docs]
     #     y_true_str = [doc["category"] for doc in news_docs]
     #     X_vec = vectorizer.transform(X_test)
     #     y_true_int = label_encoder.transform(y_true_str)
     #     y_pred_int = model.predict(X_vec)
     #     accuracy = round(accuracy_score(y_true_int, y_pred_int) * 100, 2)
-    else:
-        accuracy = 0.0
+    # else:
+    accuracy = 0.0
 
     global current_accuracy
     current_accuracy = accuracy
