@@ -4,8 +4,8 @@ import requests
 # import pandas as pd
 from datetime import datetime, timedelta
 import random
-import joblib
-import numpy as np
+# import joblib
+# import numpy as np
 from fastapi import FastAPI, APIRouter, HTTPException, BackgroundTasks, Query, UploadFile, File, Form
 from pydantic import BaseModel, EmailStr
 from passlib.context import CryptContext
@@ -34,13 +34,13 @@ NEWSDATA_API_KEY = os.getenv("NEWSDATA_API_KEY")
 CRON_SECRET = os.getenv("CRON_SECRET")
 GNEWS_API_KEY = os.getenv("GNEWS_API_KEY")
 
-# ---------------- ML model paths ----------------
-MODEL_PATH = "full_news_model.pkl"
-VECTORIZER_PATH = "full_tfidf_vectorizer.pkl"
-ENCODER_PATH = "label_encoder1.pkl"
-model = joblib.load("fake_news_model.pkl")
-vectorizer = joblib.load("tfidf_vectorizer.pkl")
-label_encoder = joblib.load(ENCODER_PATH)
+# # ---------------- ML model paths ----------------
+# MODEL_PATH = "full_news_model.pkl"
+# VECTORIZER_PATH = "full_tfidf_vectorizer.pkl"
+# ENCODER_PATH = "label_encoder1.pkl"
+# model = joblib.load("fake_news_model.pkl")
+# vectorizer = joblib.load("tfidf_vectorizer.pkl")
+# label_encoder = joblib.load(ENCODER_PATH)
 # ---------------- Classes ----------------
 ALL_CLASSES = [
     'Business', 'Crime', 'Entertainment', 'Food', 'Science',
@@ -631,10 +631,11 @@ def fetch_and_store_news(lang="en", pages=2):
 
     # ---------------- Store in DB ----------------
     for a in unique_articles:
-        title = a["title"]
-        X_vec = vectorizer.transform([title])
-        y_pred = model.predict(X_vec)
-        category = label_encoder.inverse_transform(y_pred)[0]
+        # title = a["title"]
+        # X_vec = vectorizer.transform([title])
+        # y_pred = model.predict(X_vec)
+        # category = label_encoder.inverse_transform(y_pred)[0]
+        category="Other"
         category = categorize_with_keywords(title, category)
         doc = {
             **a,
@@ -653,13 +654,13 @@ def fetch_and_store_news(lang="en", pages=2):
     print(f"[{lang}] ✅ Inserted {inserted_total} new articles after deduplication")
 
     # ---------------- Retrain model ----------------
-    if X_new:
-        X_vec_new = vectorizer.transform(X_new)
-        y_new_int = label_encoder.transform(y_new_str)
-        all_classes_int = np.arange(len(label_encoder.classes_))
-        model.partial_fit(X_vec_new, y_new_int, classes=all_classes_int)
-        joblib.dump(model, MODEL_PATH)
-        print(f"🤖 Model improved with {len(X_new)} new samples!")
+    # if X_new:
+    #     X_vec_new = vectorizer.transform(X_new)
+    #     y_new_int = label_encoder.transform(y_new_str)
+    #     all_classes_int = np.arange(len(label_encoder.classes_))
+    #     model.partial_fit(X_vec_new, y_new_int, classes=all_classes_int)
+    #     joblib.dump(model, MODEL_PATH)
+    #     print(f"🤖 Model improved with {len(X_new)} new samples!")
 
 # ---------------- News Routes ----------------
 @news_router.get("/")
@@ -695,12 +696,12 @@ def refresh_news(secret: str = Query(...)):
 
     news_docs = list(news_collection.find({"category": {"$exists": True}}))
     if news_docs:
-        X_test = [doc["title"] for doc in news_docs]
-        y_true_str = [doc["category"] for doc in news_docs]
-        X_vec = vectorizer.transform(X_test)
-        y_true_int = label_encoder.transform(y_true_str)
-        y_pred_int = model.predict(X_vec)
-        accuracy = round(accuracy_score(y_true_int, y_pred_int) * 100, 2)
+    #     X_test = [doc["title"] for doc in news_docs]
+    #     y_true_str = [doc["category"] for doc in news_docs]
+    #     X_vec = vectorizer.transform(X_test)
+    #     y_true_int = label_encoder.transform(y_true_str)
+    #     y_pred_int = model.predict(X_vec)
+    #     accuracy = round(accuracy_score(y_true_int, y_pred_int) * 100, 2)
     else:
         accuracy = 0.0
 
