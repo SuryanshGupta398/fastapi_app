@@ -68,235 +68,235 @@ def categorize_with_keywords(text: str, predicted: str) -> str:
                 return cat
     return predicted
 
-FAKE_NEWS_PATTERNS = [
-    # Clickbait patterns
-    "you won't believe", "shocked the world", "doctors hate", "this one trick",
-    "miracle cure", "secret they don't want", "instant results", "viral secret",
-    "everyone is talking about", "celebrities are", "shocking news", 
-    "the truth about", "they don't want you to know", "mainstream media won't tell",
+# FAKE_NEWS_PATTERNS = [
+#     # Clickbait patterns
+#     "you won't believe", "shocked the world", "doctors hate", "this one trick",
+#     "miracle cure", "secret they don't want", "instant results", "viral secret",
+#     "everyone is talking about", "celebrities are", "shocking news", 
+#     "the truth about", "they don't want you to know", "mainstream media won't tell",
     
-    # Sensational patterns
-    "breaking.*shocking", "urgent.*warning", "alert.*emergency", "crisis.*now",
-    "exposed.*truth", "scandal.*revealed", "cover.up", "conspiracy",
+#     # Sensational patterns
+#     "breaking.*shocking", "urgent.*warning", "alert.*emergency", "crisis.*now",
+#     "exposed.*truth", "scandal.*revealed", "cover.up", "conspiracy",
     
-    # Financial scams
-    "make money fast", "earn.*from home", "get rich quick", "instant cash",
-    "free money", "guaranteed profit", "investment secret",
+#     # Financial scams
+#     "make money fast", "earn.*from home", "get rich quick", "instant cash",
+#     "free money", "guaranteed profit", "investment secret",
     
-    # Health scams
-    "lose weight fast", "burn fat instantly", "cure.*overnight", "medical breakthrough they hide",
+#     # Health scams
+#     "lose weight fast", "burn fat instantly", "cure.*overnight", "medical breakthrough they hide",
     
-    # Emotional manipulation
-    "will make you cry", "heartbreaking", "tears of joy", "you need to see this"
-]
+#     # Emotional manipulation
+#     "will make you cry", "heartbreaking", "tears of joy", "you need to see this"
+# ]
 
-CREDIBLE_INDICATORS = [
-    "reuters", "associated press", "ap news", "bbc", "cnn", "al jazeera", 
-    "official statement", "government report", "study shows", "research indicates",
-    "according to data", "statistics show", "peer-reviewed", "confirmed", "verified"
-]
+# CREDIBLE_INDICATORS = [
+#     "reuters", "associated press", "ap news", "bbc", "cnn", "al jazeera", 
+#     "official statement", "government report", "study shows", "research indicates",
+#     "according to data", "statistics show", "peer-reviewed", "confirmed", "verified"
+# ]
 
-TRUSTED_DOMAINS = [
-    "reuters.com", "ap.org", "bbc.com", "bbc.co.uk", "aljazeera.com",
-    "nytimes.com", "washingtonpost.com", "theguardian.com"
-]
+# TRUSTED_DOMAINS = [
+#     "reuters.com", "ap.org", "bbc.com", "bbc.co.uk", "aljazeera.com",
+#     "nytimes.com", "washingtonpost.com", "theguardian.com"
+# ]
 
-def better_similarity(a: str, b: str) -> float:
-    a_words = set(a.split())
-    b_words = set(b.split())
+# def better_similarity(a: str, b: str) -> float:
+#     a_words = set(a.split())
+#     b_words = set(b.split())
 
-    if not a_words or not b_words:
-        return 0
+#     if not a_words or not b_words:
+#         return 0
 
-    overlap = a_words.intersection(b_words)
-    score = len(overlap) / max(len(a_words), len(b_words))
+#     overlap = a_words.intersection(b_words)
+#     score = len(overlap) / max(len(a_words), len(b_words))
 
-    return score
+#     return score
 
-def ultra_fast_pattern_check(headline: str) -> dict:
-    """Ultra-fast pattern matching"""
-    headline_lower = headline.lower().strip()
+# def ultra_fast_pattern_check(headline: str) -> dict:
+#     """Ultra-fast pattern matching"""
+#     headline_lower = headline.lower().strip()
     
-    # Check for fake news patterns
-    fake_score = 0
-    for pattern in FAKE_NEWS_PATTERNS:
-        if re.search(pattern, headline_lower):
-            fake_score += 1
+#     # Check for fake news patterns
+#     fake_score = 0
+#     for pattern in FAKE_NEWS_PATTERNS:
+#         if re.search(pattern, headline_lower):
+#             fake_score += 1
     
-    # Check for credible indicators
-    credible_score = 0
-    for indicator in CREDIBLE_INDICATORS:
-        if indicator in headline_lower:
-            credible_score += 1
+#     # Check for credible indicators
+#     credible_score = 0
+#     for indicator in CREDIBLE_INDICATORS:
+#         if indicator in headline_lower:
+#             credible_score += 1
     
-    # Text analysis
-    words = headline.split()
-    word_count = len(words)
-    has_caps = any(word.isupper() for word in words if len(word) > 3)
-    has_exclamation = '!' in headline
+#     # Text analysis
+#     words = headline.split()
+#     word_count = len(words)
+#     has_caps = any(word.isupper() for word in words if len(word) > 3)
+#     has_exclamation = '!' in headline
     
-    # Calculate confidence
-    if fake_score >= 2:
-        confidence = min(0.3 + (fake_score * 0.15), 0.9)
-        rating = "Fake"
-        reason = f"Multiple fake news patterns detected"
-    elif credible_score >= 2:
-        confidence = min(0.7 + (credible_score * 0.1), 0.9)
-        rating = "True" 
-        reason = f"Multiple credible indicators found"
-    elif credible_score == 1:
-        confidence = 0.6
-        rating = "Likely True"
-        reason = "Contains credible reference"
-    elif fake_score == 1:
-        confidence = 0.4
-        rating = "Suspicious"
-        reason = "One fake news pattern detected"
-    else:
-        confidence = 0.5
-        rating = "Uncertain"
-        reason = "No clear indicators found"
+#     # Calculate confidence
+#     if fake_score >= 2:
+#         confidence = min(0.3 + (fake_score * 0.15), 0.9)
+#         rating = "Fake"
+#         reason = f"Multiple fake news patterns detected"
+#     elif credible_score >= 2:
+#         confidence = min(0.7 + (credible_score * 0.1), 0.9)
+#         rating = "True" 
+#         reason = f"Multiple credible indicators found"
+#     elif credible_score == 1:
+#         confidence = 0.6
+#         rating = "Likely True"
+#         reason = "Contains credible reference"
+#     elif fake_score == 1:
+#         confidence = 0.4
+#         rating = "Suspicious"
+#         reason = "One fake news pattern detected"
+#     else:
+#         confidence = 0.5
+#         rating = "Uncertain"
+#         reason = "No clear indicators found"
     
-    # Adjust for sensationalism
-    if has_exclamation and has_caps and word_count < 10:
-        confidence = max(confidence - 0.2, 0.1)
-        if rating != "Fake":
-            rating = "Sensational"
-        reason = "Uses sensational language"
+#     # Adjust for sensationalism
+#     if has_exclamation and has_caps and word_count < 10:
+#         confidence = max(confidence - 0.2, 0.1)
+#         if rating != "Fake":
+#             rating = "Sensational"
+#         reason = "Uses sensational language"
     
-    return {
-        "rating": rating,
-        "confidence": round(confidence, 2),
-        "reason": reason,
-        "fake_patterns": fake_score,
-        "credible_indicators": credible_score
-    }
+#     return {
+#         "rating": rating,
+#         "confidence": round(confidence, 2),
+#         "reason": reason,
+#         "fake_patterns": fake_score,
+#         "credible_indicators": credible_score
+#     }
 
-def fast_mongodb_check(headline: str) -> dict:
-    """Fast MongoDB check with improved fuzzy matching + safer recent filter"""
-    try:
-        headline = headline.lower()
+# def fast_mongodb_check(headline: str) -> dict:
+#     """Fast MongoDB check with improved fuzzy matching + safer recent filter"""
+#     try:
+#         headline = headline.lower()
 
-        # Fetch last 15 days (safe range) — not just 3 days
-        recent_limit = datetime.utcnow() - timedelta(days=15)
+#         # Fetch last 15 days (safe range) — not just 3 days
+#         recent_limit = datetime.utcnow() - timedelta(days=15)
 
-        recent_news = list(news_collection.find({
-            "createdAt": {"$gte": recent_limit}
-        }).limit(200))
+#         recent_news = list(news_collection.find({
+#             "createdAt": {"$gte": recent_limit}
+#         }).limit(200))
 
-        # If still empty, fallback: remove date filter entirely
-        if not recent_news:
-            recent_news = list(news_collection.find().limit(200))
+#         # If still empty, fallback: remove date filter entirely
+#         if not recent_news:
+#             recent_news = list(news_collection.find().limit(200))
 
-        matches = []
+#         matches = []
 
-        for news in recent_news:
-            news_title = news.get("title", "").lower()
-            if not news_title:
-                continue
+#         for news in recent_news:
+#             news_title = news.get("title", "").lower()
+#             if not news_title:
+#                 continue
 
-            # Use better overlap scoring
-            similarity = better_similarity(headline, news_title)
+#             # Use better overlap scoring
+#             similarity = better_similarity(headline, news_title)
 
-            if similarity >= 0.2:  # Lower threshold
-                matches.append({
-                    "title": news.get("title", ""),
-                    "similarity": round(similarity, 2),
-                    "url": news.get("url", ""),
-                    "source": news.get("source", "Unknown"),
-                })
+#             if similarity >= 0.2:  # Lower threshold
+#                 matches.append({
+#                     "title": news.get("title", ""),
+#                     "similarity": round(similarity, 2),
+#                     "url": news.get("url", ""),
+#                     "source": news.get("source", "Unknown"),
+#                 })
 
-        matches.sort(key=lambda x: x["similarity"], reverse=True)
-        top_matches = matches[:5]
+#         matches.sort(key=lambda x: x["similarity"], reverse=True)
+#         top_matches = matches[:5]
 
-        return {
-            "found": len(top_matches) > 0,
-            "count": len(top_matches),
-            "matches": top_matches
-        }
+#         return {
+#             "found": len(top_matches) > 0,
+#             "count": len(top_matches),
+#             "matches": top_matches
+#         }
 
-    except Exception as e:
-        print("MongoDB check error:", e)
-        return {"found": False, "count": 0, "matches": []}
+#     except Exception as e:
+#         print("MongoDB check error:", e)
+#         return {"found": False, "count": 0, "matches": []}
 
-def fast_gnews_check(headline: str) -> dict:
-    """Fast GNews check with timeout"""
-    GNEWS_API_KEY = os.getenv("GNEWS_API_KEY")
-    if not GNEWS_API_KEY:
-        return {"error": "API key missing"}
+# def fast_gnews_check(headline: str) -> dict:
+#     """Fast GNews check with timeout"""
+#     GNEWS_API_KEY = os.getenv("GNEWS_API_KEY")
+#     if not GNEWS_API_KEY:
+#         return {"error": "API key missing"}
     
-    try:
-        # Use only first 4 words for search (faster)
-        search_terms = " ".join(headline.split()[:4])
-        url = f"https://gnews.io/api/v4/search?q={search_terms}&token={GNEWS_API_KEY}&lang=en&max=2"
+#     try:
+#         # Use only first 4 words for search (faster)
+#         search_terms = " ".join(headline.split()[:4])
+#         url = f"https://gnews.io/api/v4/search?q={search_terms}&token={GNEWS_API_KEY}&lang=en&max=2"
         
-        response = requests.get(url, timeout=3)  # 3 second timeout
+#         response = requests.get(url, timeout=3)  # 3 second timeout
         
-        if response.status_code == 200:
-            data = response.json()
-            if "articles" in data and data["articles"]:
-                articles = []
-                for article in data["articles"][:2]:
-                    # Check if domain is trusted
-                    domain_trusted = any(domain in article.get("url", "") for domain in TRUSTED_DOMAINS)
-                    articles.append({
-                        "title": article["title"],
-                        "url": article["url"],
-                        "source": article.get("source", {}).get("name", "Unknown"),
-                        "trusted_domain": domain_trusted
-                    })
+#         if response.status_code == 200:
+#             data = response.json()
+#             if "articles" in data and data["articles"]:
+#                 articles = []
+#                 for article in data["articles"][:2]:
+#                     # Check if domain is trusted
+#                     domain_trusted = any(domain in article.get("url", "") for domain in TRUSTED_DOMAINS)
+#                     articles.append({
+#                         "title": article["title"],
+#                         "url": article["url"],
+#                         "source": article.get("source", {}).get("name", "Unknown"),
+#                         "trusted_domain": domain_trusted
+#                     })
                 
-                return {
-                    "found": True,
-                    "count": len(articles),
-                    "articles": articles,
-                    "trusted_sources": sum(1 for a in articles if a["trusted_domain"])
-                }
-        return {"found": False, "count": 0}
-    except requests.exceptions.Timeout:
-        return {"error": "Timeout"}
-    except Exception as e:
-        return {"error": str(e)}
+#                 return {
+#                     "found": True,
+#                     "count": len(articles),
+#                     "articles": articles,
+#                     "trusted_sources": sum(1 for a in articles if a["trusted_domain"])
+#                 }
+#         return {"found": False, "count": 0}
+#     except requests.exceptions.Timeout:
+#         return {"error": "Timeout"}
+#     except Exception as e:
+#         return {"error": str(e)}
 
-# ---------------- SAFE MODEL LOADING FIX ----------------
-model = None
-vectorizer = None
-label_encoder = None
-current_accuracy = 0.0
+# # ---------------- SAFE MODEL LOADING FIX ----------------
+# model = None
+# vectorizer = None
+# label_encoder = None
+# current_accuracy = 0.0
 
-def _safe_load_joblib(path, desc):
-    try:
-        obj = joblib.load(path)
-        print(f"✅ Loaded {desc} from {path}")
-        return obj
-    except FileNotFoundError:
-        print(f"⚠️ {desc} not found at {path}. Creating fallback.")
-    except Exception as e:
-        print(f"⚠️ Error loading {desc}: {e}")
-    return None
+# def _safe_load_joblib(path, desc):
+#     try:
+#         obj = joblib.load(path)
+#         print(f"✅ Loaded {desc} from {path}")
+#         return obj
+#     except FileNotFoundError:
+#         print(f"⚠️ {desc} not found at {path}. Creating fallback.")
+#     except Exception as e:
+#         print(f"⚠️ Error loading {desc}: {e}")
+#     return None
 
-# Load vectorizer
-vectorizer = _safe_load_joblib(VECTORIZER_PATH, "TF-IDF Vectorizer")
-if vectorizer is None:
-    from sklearn.feature_extraction.text import TfidfVectorizer
-    vectorizer = TfidfVectorizer(max_features=5000)
-    print("ℹ️ Created fallback TfidfVectorizer (unfitted).")
+# # Load vectorizer
+# vectorizer = _safe_load_joblib(VECTORIZER_PATH, "TF-IDF Vectorizer")
+# if vectorizer is None:
+#     from sklearn.feature_extraction.text import TfidfVectorizer
+#     vectorizer = TfidfVectorizer(max_features=5000)
+#     print("ℹ️ Created fallback TfidfVectorizer (unfitted).")
 
-# Load encoder
-label_encoder = _safe_load_joblib(ENCODER_PATH, "Label Encoder")
-if label_encoder is None:
-    label_encoder = LabelEncoder()
-    label_encoder.fit(ALL_CLASSES)
-    print("ℹ️ Fitted fallback LabelEncoder using ALL_CLASSES.")
+# # Load encoder
+# label_encoder = _safe_load_joblib(ENCODER_PATH, "Label Encoder")
+# if label_encoder is None:
+#     label_encoder = LabelEncoder()
+#     label_encoder.fit(ALL_CLASSES)
+#     print("ℹ️ Fitted fallback LabelEncoder using ALL_CLASSES.")
 
-# Load model
-model = _safe_load_joblib(MODEL_PATH, "News Classifier Model")
-if model is None:
-    model = SGDClassifier(max_iter=1000, tol=1e-3)
-    print("ℹ️ Created fallback SGDClassifier model.")
+# # Load model
+# model = _safe_load_joblib(MODEL_PATH, "News Classifier Model")
+# if model is None:
+#     model = SGDClassifier(max_iter=1000, tol=1e-3)
+#     print("ℹ️ Created fallback SGDClassifier model.")
 
-if not NEWSDATA_API_KEY:
-    print("⚠️ NEWSDATA_API_KEY not set. fetch_and_store_news() will fail if called.")
+# if not NEWSDATA_API_KEY:
+#     print("⚠️ NEWSDATA_API_KEY not set. fetch_and_store_news() will fail if called.")
 
 
 # ---------------- Request Models ----------------
@@ -777,83 +777,83 @@ def get_smart_trending_news(limit: int = 100):
 
 # ---------------- Verify News Route (Google Fact Check API) ----------------
 # ---------------- Verify News Route (Integrated: Google Fact Check + Local DB) ----------------
-@news_router.post("/verify-news")
-async def verify_news_comprehensive(headline: str = Form(...)):
-    """
-    🔍 COMPREHENSIVE verification - pattern + DB + external news
-    Response time: 3-5 seconds
-    """
-    start_time = datetime.utcnow()
+# @news_router.post("/verify-news")
+# async def verify_news_comprehensive(headline: str = Form(...)):
+#     """
+#     🔍 COMPREHENSIVE verification - pattern + DB + external news
+#     Response time: 3-5 seconds
+#     """
+#     start_time = datetime.utcnow()
     
-    try:
-        headline = headline.strip()
-        if not headline:
-            raise HTTPException(status_code=400, detail="Headline required")
+#     try:
+#         headline = headline.strip()
+#         if not headline:
+#             raise HTTPException(status_code=400, detail="Headline required")
 
-        # Step 1: Instant pattern check
-        pattern_result = ultra_fast_pattern_check(headline)
+#         # Step 1: Instant pattern check
+#         pattern_result = ultra_fast_pattern_check(headline)
         
-        # Step 2: MongoDB check
-        mongodb_result = fast_mongodb_check(headline)
+#         # Step 2: MongoDB check
+#         mongodb_result = fast_mongodb_check(headline)
         
-        # Step 3: External news check
-        gnews_result = fast_gnews_check(headline)
+#         # Step 3: External news check
+#         gnews_result = fast_gnews_check(headline)
         
-        # Step 4: Calculate comprehensive confidence
-        confidence_factors = [pattern_result["confidence"]]
+#         # Step 4: Calculate comprehensive confidence
+#         confidence_factors = [pattern_result["confidence"]]
         
-        # MongoDB influence
-        if mongodb_result.get("found"):
-            db_boost = 0.15 + (mongodb_result["count"] * 0.05)
-            confidence_factors.append(min(pattern_result["confidence"] + db_boost, 0.9))
+#         # MongoDB influence
+#         if mongodb_result.get("found"):
+#             db_boost = 0.15 + (mongodb_result["count"] * 0.05)
+#             confidence_factors.append(min(pattern_result["confidence"] + db_boost, 0.9))
         
-        # External news influence
-        if gnews_result.get("found"):
-            external_boost = 0.2 + (gnews_result["count"] * 0.08)
-            if gnews_result.get("trusted_sources", 0) > 0:
-                external_boost += 0.1  # Extra boost for trusted domains
-            confidence_factors.append(min(pattern_result["confidence"] + external_boost, 0.95))
+#         # External news influence
+#         if gnews_result.get("found"):
+#             external_boost = 0.2 + (gnews_result["count"] * 0.08)
+#             if gnews_result.get("trusted_sources", 0) > 0:
+#                 external_boost += 0.1  # Extra boost for trusted domains
+#             confidence_factors.append(min(pattern_result["confidence"] + external_boost, 0.95))
         
-        # Calculate final score
-        final_confidence = sum(confidence_factors) / len(confidence_factors)
-        final_confidence = min(final_confidence, 0.95)
+#         # Calculate final score
+#         final_confidence = sum(confidence_factors) / len(confidence_factors)
+#         final_confidence = min(final_confidence, 0.95)
         
-        # Determine final rating
-        if gnews_result.get("found") and mongodb_result.get("found"):
-            final_rating = "Verified True"
-        elif gnews_result.get("found") or mongodb_result.get("found"):
-            if pattern_result["rating"] == "Fake":
-                final_rating = "Contradictory - verify manually"
-            else:
-                final_rating = "Likely True"
-        else:
-            final_rating = pattern_result["rating"]
+#         # Determine final rating
+#         if gnews_result.get("found") and mongodb_result.get("found"):
+#             final_rating = "Verified True"
+#         elif gnews_result.get("found") or mongodb_result.get("found"):
+#             if pattern_result["rating"] == "Fake":
+#                 final_rating = "Contradictory - verify manually"
+#             else:
+#                 final_rating = "Likely True"
+#         else:
+#             final_rating = pattern_result["rating"]
         
-        response_time = (datetime.utcnow() - start_time).total_seconds()
+#         response_time = (datetime.utcnow() - start_time).total_seconds()
 
-        return {
-            "status": "success",
-            "verified": final_rating in ["Verified True", "Likely True", "True"],
-            "headline": headline,
-            "rating": final_rating,
-            "confidence": round(final_confidence, 2),
-            "response_time_seconds": round(response_time, 2),
-            "sources_checked": {
-                "pattern_analysis": True,
-                "database_matches": mongodb_result.get("count", 0),
-                "external_news": gnews_result.get("count", 0),
-                "trusted_sources": gnews_result.get("trusted_sources", 0)
-            },
-            "evidence": {
-                "pattern_result": pattern_result,
-                "database_matches": mongodb_result.get("matches", []),
-                "external_articles": gnews_result.get("articles", [])
-            },
-            "message": f"Analysis completed in {response_time:.1f}s: {final_rating} ({final_confidence*100}% confidence)"
-        }
+#         return {
+#             "status": "success",
+#             "verified": final_rating in ["Verified True", "Likely True", "True"],
+#             "headline": headline,
+#             "rating": final_rating,
+#             "confidence": round(final_confidence, 2),
+#             "response_time_seconds": round(response_time, 2),
+#             "sources_checked": {
+#                 "pattern_analysis": True,
+#                 "database_matches": mongodb_result.get("count", 0),
+#                 "external_news": gnews_result.get("count", 0),
+#                 "trusted_sources": gnews_result.get("trusted_sources", 0)
+#             },
+#             "evidence": {
+#                 "pattern_result": pattern_result,
+#                 "database_matches": mongodb_result.get("matches", []),
+#                 "external_articles": gnews_result.get("articles", [])
+#             },
+#             "message": f"Analysis completed in {response_time:.1f}s: {final_rating} ({final_confidence*100}% confidence)"
+#         }
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Verification error: {str(e)}")
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"Verification error: {str(e)}")
 
 # ---------------- Traveller Updates (Local DB only) ----------------
 @news_router.get("/traveller-updates")
