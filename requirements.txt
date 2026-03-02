@@ -12,9 +12,9 @@ apscheduler
  
 # --- Text & Semantic Understanding ---
 numpy==1.26.4
-#scikit-learn==1.7.2
+scikit-learn
 #polars==1.8.2
-#pandas
+pandas
 #sentence-transformers
 #nltk==3.9.1
 
