@@ -1,7 +1,7 @@
 import os
 import re
 import requests
-import pandas as pd
+# import pandas as pd
 from datetime import datetime, timedelta
 import random
 import joblib
@@ -10,10 +10,10 @@ from fastapi import FastAPI, APIRouter, HTTPException, BackgroundTasks, Query, U
 from pydantic import BaseModel, EmailStr
 from passlib.context import CryptContext
 from fastapi.concurrency import run_in_threadpool
-from sklearn.linear_model import SGDClassifier
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics import accuracy_score
-from sklearn.preprocessing import LabelEncoder
+# from sklearn.linear_model import SGDClassifier
+# from sklearn.feature_extraction.text import TfidfVectorizer
+# from sklearn.metrics import accuracy_score
+# from sklearn.preprocessing import LabelEncoder
 from pymongo import DESCENDING 
 
 # ---------------- Local imports ----------------
