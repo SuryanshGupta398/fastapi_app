@@ -40,7 +40,7 @@ VECTORIZER_PATH = "full_tfidf_vectorizer.pkl"
 ENCODER_PATH = "label_encoder1.pkl"
 model = joblib.load("fake_news_model.pkl")
 vectorizer = joblib.load("tfidf_vectorizer.pkl")
-
+label_encoder = joblib.load(ENCODER_PATH)
 # ---------------- Classes ----------------
 ALL_CLASSES = [
     'Business', 'Crime', 'Entertainment', 'Food', 'Science',
