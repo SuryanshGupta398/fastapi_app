@@ -316,7 +316,11 @@ def health_check():
 @app.head("/health")
 def health_check_head():
     return {"status": "ok"}
-
+@app.get("/test-delete-email")
+def test_delete_email():
+    send_account_deleted_email("guptajisuryansh286@gmail.com", "Test User")
+    return {"message": "Test email sent"}
+    
 # ---------------- Email Helpers ----------------
 async def send_welcome_email(email: str, full_name: str):
     subject = "Welcome to Fake News Detector 🎉"
@@ -330,20 +334,18 @@ async def send_otp_email(email: str, otp: str):
 
 otp_store = {}
 
-async def send_account_deleted_email(email: str, full_name: str):
+def send_account_deleted_email(email: str, full_name: str):
     subject = "Your Account Has Been Deleted"
 
     body = f"""
     <h2>Hello {full_name},</h2>
     <p>Your account has been <b>deleted successfully</b>.</p>
-    <p>If this was not done by you, please contact support immediately.</p>
-    <br>
-    <p>You can register again anytime to continue verifying news and fighting misinformation.</p>
+    <p>Please register again to verify the news.</p>
     <br>
     <p>— Fake News Detector Team</p>
     """
 
-    await run_in_threadpool(send_email, email, subject, body)
+    send_email(email, subject, body)
     
 ADMIN_EMAIL=os.getenv("MAIL_FROM")
 # ---------------- User Routes ----------------
