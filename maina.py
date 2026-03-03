@@ -330,6 +330,21 @@ async def send_otp_email(email: str, otp: str):
 
 otp_store = {}
 
+async def send_account_deleted_email(email: str, full_name: str):
+    subject = "Your Account Has Been Deleted"
+
+    body = f"""
+    <h2>Hello {full_name},</h2>
+    <p>Your account has been <b>deleted successfully</b>.</p>
+    <p>If this was not done by you, please contact support immediately.</p>
+    <br>
+    <p>You can register again anytime to continue verifying news and fighting misinformation.</p>
+    <br>
+    <p>— Fake News Detector Team</p>
+    """
+
+    await run_in_threadpool(send_email, email, subject, body)
+    
 ADMIN_EMAIL=os.getenv("MAIL_FROM")
 # ---------------- User Routes ----------------
 @user_router.post("/register")
@@ -539,13 +554,43 @@ async def reset_password(request: ResetPasswordRequest):
 
 # ---------------- Delete Account ----------------
 @user_router.delete("/delete-account")
-async def delete_account(email: EmailStr, password: str):
+async def delete_account(
+    email: EmailStr,
+    password: str = None,
+    background_tasks: BackgroundTasks = None
+):
     user = collection.find_one({"email": email.lower()})
-    if not user or not pwd_context.verify(password, user["password"]):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-    collection.delete_one({"email": email.lower()})
-    return {"status": "success", "message": "Account deleted successfully"}
 
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    full_name = user.get("full_name", "User")
+
+    # ✅ Google user → no password required
+    if user.get("is_google_user", False):
+        collection.delete_one({"email": email.lower()})
+
+        if background_tasks:
+            background_tasks.add_task(send_account_deleted_email, email, full_name)
+
+        return {
+            "status": "success",
+            "message": "Google account deleted successfully"
+        }
+
+    # ✅ Normal user → password required
+    if not password or not pwd_context.verify(password, user["password"]):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    collection.delete_one({"email": email.lower()})
+
+    if background_tasks:
+        background_tasks.add_task(send_account_deleted_email, email, full_name)
+
+    return {
+        "status": "success",
+        "message": "Account deleted successfully"
+    }
 # ---------------- News Fetch & Train ----------------
 news_collection.create_index("url", unique=True)
 
