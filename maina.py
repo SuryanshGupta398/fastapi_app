@@ -316,6 +316,7 @@ def health_check():
 @app.head("/health")
 def health_check_head():
     return {"status": "ok"}
+    
 @app.get("/test-delete-email")
 def test_delete_email():
     send_account_deleted_email("guptajisuryansh286@gmail.com", "Test User")
@@ -325,12 +326,12 @@ def test_delete_email():
 def send_welcome_email(email: str, full_name: str):
     subject = "Welcome to Fake News Detector 🎉"
     body = f"<h2>Hello {full_name},</h2><p>Thank you for signing up!</p>"
-    await run_in_threadpool(send_email, email, subject, body)
+    send_email( email, subject, body)
 
 def send_otp_email(email: str, otp: str):
     subject = "Password Reset OTP"
     body = f"<h2>Password Reset</h2><p>Your OTP is: <b>{otp}</b></p><p>Valid for 5 minutes.</p>"
-    await run_in_threadpool(send_email, email, subject, body)
+    send_email( email, subject, body)
 
 otp_store = {}
 
