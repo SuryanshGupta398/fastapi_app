@@ -324,8 +324,16 @@ def test_delete_email():
     
 # ---------------- Email Helpers ----------------
 def send_welcome_email(email: str, full_name: str):
-    subject = "Welcome to Fake News Detector 🎉"
-    body = f"<h2>Hello {full_name},</h2><p>Thank you for signing up!</p>"
+    subject = "Welcome to Realithm (A Fake News Detector App ) 🎉"
+    body = f"""<h2>Hello {full_name},</h2>
+    <p>Thank you for signing up with <b>Fake News Detector</b>! We’re excited to have you join our mission of making the internet safer.</p>
+        <ul>
+            <li>✅ Instantly check if a news article is genuine</li>
+            <li>✅ Stay updated with verified news sources</li>
+            <li>✅ Report suspicious content</li>
+        </ul>
+        <p>Welcome once again, and thank you for trusting us.</p>
+        <br><p>Best regards,<br>The Realithm Team</p>"""
     send_email( email, subject, body)
 
 def send_otp_email(email: str, otp: str):
@@ -343,7 +351,7 @@ def send_account_deleted_email(email: str, full_name: str):
     <p>Your account has been <b>deleted successfully</b>.</p>
     <p>Please register again to verify the news.</p>
     <br>
-    <p>— Fake News Detector Team</p>
+    <p>— The Realithm Team</p>
     """
 
     send_email(email, subject, body)
@@ -1075,7 +1083,7 @@ async def report_misinformation(
         <p>Thank you for helping us fight misinformation!</p>
         <p>We’ll review your report and take appropriate action.</p>
         <br>
-        <p>— The Fake News Detector Team</p>
+        <p>— The Realithm Team</p>
         """
 
         background_tasks.add_task(
