@@ -322,12 +322,12 @@ def test_delete_email():
     return {"message": "Test email sent"}
     
 # ---------------- Email Helpers ----------------
-async def send_welcome_email(email: str, full_name: str):
+def send_welcome_email(email: str, full_name: str):
     subject = "Welcome to Fake News Detector 🎉"
     body = f"<h2>Hello {full_name},</h2><p>Thank you for signing up!</p>"
     await run_in_threadpool(send_email, email, subject, body)
 
-async def send_otp_email(email: str, otp: str):
+def send_otp_email(email: str, otp: str):
     subject = "Password Reset OTP"
     body = f"<h2>Password Reset</h2><p>Your OTP is: <b>{otp}</b></p><p>Valid for 5 minutes.</p>"
     await run_in_threadpool(send_email, email, subject, body)
@@ -396,7 +396,7 @@ async def register_user(new_user: User, background_tasks: BackgroundTasks):
     
     user_dict["is_blocked"] = False
     resp = collection.insert_one(user_dict)
-    background_tasks.add_task(lambda: send_welcome_email(email, new_user.full_name))
+    background_tasks.add_task(send_welcome_email, email, new_user.full_name)
 
     return {"status": "success", "id": str(resp.inserted_id), "message": "User registered successfully"}
 
@@ -536,7 +536,7 @@ async def forgot_password(request: ForgotPasswordRequest, background_tasks: Back
         raise HTTPException(status_code=404, detail="Email not registered")
     otp = str(random.randint(100000, 999999))
     otp_store[request.email.lower()] = {"otp": otp, "expires": datetime.utcnow() + timedelta(minutes=5)}
-    background_tasks.add_task(lambda: send_otp_email(request.email, otp))
+    background_tasks.add_task(send_otp_email, request.email, otp)
     return {"status": "success", "message": "OTP sent successfully"}
 
 @user_router.post("/reset-password")
@@ -1032,6 +1032,7 @@ def travel_route_updates(
 # ---------------- Report Route ----------------
 @report_router.post("/misinformation")
 async def report_misinformation(
+    background_tasks: BackgroundTasks,
     email: str = Form(...),
     link: str = Form(""),
     reason: str = Form(...),
@@ -1039,10 +1040,14 @@ async def report_misinformation(
 ):
     try:
         attachment_path = None
+
+        # Save attachment temporarily
         if proof:
             attachment_path = f"temp_{proof.filename}"
             with open(attachment_path, "wb") as f:
                 f.write(await proof.read())
+
+        # ---------------- ADMIN EMAIL ---------------- #
 
         subject_admin = "🚨 New Misinformation Report"
         body_admin = f"""
@@ -1053,12 +1058,15 @@ async def report_misinformation(
         <p><i>🕓 Reported at: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC</i></p>
         """
 
-        send_email(
-            to_email=os.getenv("MAIL_USERNAME"),
-            subject=subject_admin,
-            body=body_admin,
-            attachment_path=attachment_path
+        background_tasks.add_task(
+            send_email,
+            os.getenv("MAIL_USERNAME"),
+            subject_admin,
+            body_admin,
+            attachment_path
         )
+
+        # ---------------- USER CONFIRMATION EMAIL ---------------- #
 
         subject_user = "✅ Thanks for Reporting Misinformation!"
         body_user = f"""
@@ -1069,16 +1077,33 @@ async def report_misinformation(
         <p>— The Fake News Detector Team</p>
         """
 
-        send_email(to_email=email, subject=subject_user, body=body_user)
+        background_tasks.add_task(
+            send_email,
+            email,
+            subject_user,
+            body_user,
+            None
+        )
 
-        if attachment_path and os.path.exists(attachment_path):
-            os.remove(attachment_path)
+        # ---------------- DELETE TEMP FILE SAFELY ---------------- #
 
-        return {"status": "success", "message": "Report submitted successfully"}
+        if attachment_path:
+            def cleanup_file(path):
+                if os.path.exists(path):
+                    os.remove(path)
+
+            background_tasks.add_task(cleanup_file, attachment_path)
+
+        return {
+            "status": "success",
+            "message": "Report submitted successfully"
+        }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing report: {str(e)}")
-
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error processing report: {str(e)}"
+        )
 # ---------------- Register Routers ----------------
 app.include_router(user_router)
 app.include_router(news_router)
