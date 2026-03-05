@@ -687,15 +687,28 @@ def fetch_and_store_news(lang="en", pages=2):
 
     # ---------------- Store in DB ----------------
     for a in unique_articles:
-        # title = a["title"]
+        title = a.get("title","")
+        description = a.get("description", "")
+        if not title:
+            continue
+
         # X_vec = vectorizer.transform([title])
         # y_pred = model.predict(X_vec)
         # category = label_encoder.inverse_transform(y_pred)[0]
         category="Other"
         category = categorize_with_keywords(title, category)
         doc = {
-            **a,
+            "title": title,
+            "description": description,
+            "url": a.get("url", ""),
+            "image": a.get("image") or "",   # ✅ prevents None
+            "publishedAt": a.get("publishedAt", ""),
+            "language": a.get("language", lang),
+            "source": a.get("source", ""),
             "category": category,
+            "views": 0,
+            "shares": 0,
+            "likes": 0,
             "createdAt": datetime.utcnow()
         }
         try:
