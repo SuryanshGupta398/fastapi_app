@@ -782,7 +782,7 @@ def get_smart_trending_news(limit: int = 100):
                 {"createdAt": {"$gte": last_7_days}},
                 {"_id": 1, "title": 1, "description": 1, "views": 1,
                  "shares": 1, "likes": 1, "category": 1,
-                 "createdAt": 1, "image_url": 1, "source": 1}
+                 "createdAt": 1, "image": 1, "url": 1, "source": 1}
             ).limit(400)
         )
 
@@ -791,6 +791,8 @@ def get_smart_trending_news(limit: int = 100):
             views = n.get("views", 0)
             shares = n.get("shares", 0)
             likes = n.get("likes", 0)
+            n["image"] = n.get("image_url", "")
+            n["url"] = n.get("url", "")
             title = n.get("title", "").lower()
             created_at = n.get("createdAt", now)
 
