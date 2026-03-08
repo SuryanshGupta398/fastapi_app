@@ -15,6 +15,8 @@ from fastapi.concurrency import run_in_threadpool
 # from sklearn.metrics import accuracy_score
 # from sklearn.preprocessing import LabelEncoder
 from pymongo import DESCENDING 
+from uuid import uuid4
+from fastapi.staticfiles import StaticFiles
 
 # ---------------- Local imports ----------------
 from configuration import collection, news_collection
@@ -34,6 +36,11 @@ NEWSDATA_API_KEY = os.getenv("NEWSDATA_API_KEY")
 CRON_SECRET = os.getenv("CRON_SECRET")
 GNEWS_API_KEY = os.getenv("GNEWS_API_KEY")
 
+UPLOAD_FOLDER = "uploads"
+
+if not os.path.exists(UPLOAD_FOLDER):
+    os.makedirs(UPLOAD_FOLDER)
+    
 # # ---------------- ML model paths ----------------
 # MODEL_PATH = "full_news_model.pkl"
 # VECTORIZER_PATH = "full_tfidf_vectorizer.pkl"
@@ -779,6 +786,58 @@ def refresh_news(secret: str = Query(...)):
 
     return {"status": "success", "message": "News fetched & model improved", "accuracy": accuracy}
 
+@news_router.post("/admin/publish-news")
+async def publish_news(
+    title: str = Form(...),
+    description: str = Form(...),
+    url: str = Form(...),
+    category: str = Form(...),
+    language: str = Form(...),
+    source: str = Form(...),
+    image: UploadFile = File(None)
+):
+    try:
+
+        image_url = None
+
+        # ---------------- SAVE IMAGE ----------------
+        if image:
+            ext = image.filename.split(".")[-1]
+            filename = f"{uuid4()}.{ext}"
+            filepath = os.path.join(UPLOAD_FOLDER, filename)
+
+            with open(filepath, "wb") as f:
+                f.write(await image.read())
+
+            image_url = f"/uploads/{filename}"
+
+        # ---------------- CREATE NEWS DOCUMENT ----------------
+        news_doc = {
+            "title": title,
+            "description": description,
+            "url": url,
+            "category": category,
+            "language": language,
+            "source": source,
+            "image": image_url,
+            "publishedAt": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+            "views": 0,
+            "shares": 0,
+            "likes": 0,
+            "createdAt": datetime.utcnow()
+        }
+
+        result = news_collection.insert_one(news_doc)
+
+        return {
+            "status": "success",
+            "message": "News published successfully",
+            "news_id": str(result.inserted_id),
+            "image": image_url
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 TRENDING_KEYWORDS = [
     "breaking", "exclusive", "update", "live", "urgent", "just in", "latest", "alert"
 ]
@@ -1132,3 +1191,4 @@ async def report_misinformation(
 app.include_router(user_router)
 app.include_router(news_router)
 app.include_router(report_router)
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
