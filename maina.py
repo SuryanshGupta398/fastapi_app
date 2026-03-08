@@ -798,16 +798,19 @@ async def publish_news(
 ):
     try:
 
-        image_url = None
+        image_url = ""
 
         # ---------------- SAVE IMAGE ----------------
-        if image:
-            ext = image.filename.split(".")[-1]
+        if image and image.filename:
+
+            ext = image.filename.split(".")[-1] if "." in image.filename else "jpg"
             filename = f"{uuid4()}.{ext}"
+
             filepath = os.path.join(UPLOAD_FOLDER, filename)
 
             with open(filepath, "wb") as f:
-                f.write(await image.read())
+                content = await image.read()
+                f.write(content)
 
             image_url = f"/uploads/{filename}"
 
@@ -837,7 +840,10 @@ async def publish_news(
         }
 
     except Exception as e:
+        print("❌ Publish Error:", e)   # VERY IMPORTANT FOR DEBUG
         raise HTTPException(status_code=500, detail=str(e))
+
+
 TRENDING_KEYWORDS = [
     "breaking", "exclusive", "update", "live", "urgent", "just in", "latest", "alert"
 ]
