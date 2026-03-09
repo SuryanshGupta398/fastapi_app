@@ -375,30 +375,41 @@ def archive_old_news():
 
     three_months_ago = datetime.utcnow() - timedelta(days=90)
 
-    cursor = news_collection.find({
-        "createdAt": {"$lt": three_months_ago}
-    })
-
     filename = f"{ARCHIVE_FOLDER}/news_archive_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
 
     wb = Workbook(write_only=True)
     ws = wb.create_sheet("Old News")
 
+    batch_size = 500
+    skip = 0
     headers_written = False
-    count = 0
+    total = 0
 
-    for news in cursor:
+    while True:
 
-        news["_id"] = str(news["_id"])
+        batch = list(
+            news_collection.find(
+                {"createdAt": {"$lt": three_months_ago}}
+            ).skip(skip).limit(batch_size)
+        )
 
-        if not headers_written:
-            ws.append(list(news.keys()))
-            headers_written = True
+        if not batch:
+            break
 
-        ws.append(list(news.values()))
-        count += 1
+        for news in batch:
 
-    if count == 0:
+            news["_id"] = str(news["_id"])
+
+            if not headers_written:
+                ws.append(list(news.keys()))
+                headers_written = True
+
+            ws.append(list(news.values()))
+            total += 1
+
+        skip += batch_size
+
+    if total == 0:
         return {"message": "No news older than 3 months"}
 
     wb.save(filename)
