@@ -3,6 +3,7 @@ import re
 import requests
 import pandas as pd
 from fastapi.responses import FileResponse
+from openpyxl import Workbook
 from datetime import datetime, timedelta
 import pytz
 import random
@@ -369,39 +370,39 @@ def test_delete_email():
     send_account_deleted_email("guptajisuryansh286@gmail.com", "Test User")
     return {"message": "Test email sent"}
 
-@user_router.get("/admin/archive-old-news")
-async def archive_old_news():
+@news_router.get("/admin/archive-old-news")
+def archive_old_news():
 
-    # Calculate 3 months old date
     three_months_ago = datetime.utcnow() - timedelta(days=90)
 
-    # Find old news
-    old_news = list(news_collection.find({
+    cursor = news_collection.find({
         "createdAt": {"$lt": three_months_ago}
-    }))
+    })
 
-    if not old_news:
-        return {"message": "No news older than 3 months"}
-
-    # Convert ObjectId to string
-    for n in old_news:
-        n["_id"] = str(n["_id"])
-
-    # Convert to DataFrame
-    df = pd.DataFrame(old_news)
-
-    # File name
     filename = f"{ARCHIVE_FOLDER}/news_archive_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
 
-    # Save Excel
-    df.to_excel(filename, index=False)
+    wb = Workbook(write_only=True)
+    ws = wb.create_sheet("Old News")
 
-    # Delete archived news
-    # news_collection.delete_many({
-        # "createdAt": {"$lt": three_months_ago}
-    # })
+    headers_written = False
+    count = 0
 
-    # Return file download
+    for news in cursor:
+
+        news["_id"] = str(news["_id"])
+
+        if not headers_written:
+            ws.append(list(news.keys()))
+            headers_written = True
+
+        ws.append(list(news.values()))
+        count += 1
+
+    if count == 0:
+        return {"message": "No news older than 3 months"}
+
+    wb.save(filename)
+
     return FileResponse(
         filename,
         filename=os.path.basename(filename),
