@@ -9,7 +9,8 @@ python-multipart==0.0.9
 joblib==1.4.2
 packaging==24.1
 apscheduler
- 
+pytz
+
 # --- Text & Semantic Understanding ---
 numpy==1.26.4
 scikit-learn
