@@ -40,7 +40,8 @@ UPLOAD_FOLDER = "uploads"
 
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
-    
+
+BASE_URL = os.getenv("BASE_URL", "https://fastapi-app-jbug.onrender.com")
 # # ---------------- ML model paths ----------------
 # MODEL_PATH = "full_news_model.pkl"
 # VECTORIZER_PATH = "full_tfidf_vectorizer.pkl"
@@ -812,8 +813,8 @@ async def publish_news(
                 content = await image.read()
                 f.write(content)
 
-            image_url = f"/uploads/{filename}"
-
+            image_url = f"{BASE_URL}/uploads/{filename}"
+            
         # ---------------- CREATE NEWS DOCUMENT ----------------
         news_doc = {
             "title": title,
