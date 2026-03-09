@@ -16,6 +16,7 @@ numpy==1.26.4
 scikit-learn
 #polars==1.8.2
 pandas
+openpyxl
 #sentence-transformers
 #nltk==3.9.1
 
