@@ -1,7 +1,8 @@
 import os
 import re
 import requests
-# import pandas as pd
+import pandas as pd
+from fastapi.responses import FileResponse
 from datetime import datetime, timedelta
 import pytz
 import random
@@ -74,6 +75,9 @@ if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
 BASE_URL = os.getenv("BASE_URL", "https://fastapi-app-jbug.onrender.com")
+
+ARCHIVE_FOLDER = "archives"
+os.makedirs(ARCHIVE_FOLDER, exist_ok=True)
 # # ---------------- ML model paths ----------------
 # MODEL_PATH = "full_news_model.pkl"
 # VECTORIZER_PATH = "full_tfidf_vectorizer.pkl"
@@ -361,6 +365,45 @@ def health_check_head():
 def test_delete_email():
     send_account_deleted_email("guptajisuryansh286@gmail.com", "Test User")
     return {"message": "Test email sent"}
+
+@router.get("/admin/archive-old-news")
+async def archive_old_news():
+
+    # Calculate 3 months old date
+    three_months_ago = datetime.utcnow() - timedelta(days=90)
+
+    # Find old news
+    old_news = list(news_collection.find({
+        "createdAt": {"$lt": three_months_ago}
+    }))
+
+    if not old_news:
+        return {"message": "No news older than 3 months"}
+
+    # Convert ObjectId to string
+    for n in old_news:
+        n["_id"] = str(n["_id"])
+
+    # Convert to DataFrame
+    df = pd.DataFrame(old_news)
+
+    # File name
+    filename = f"{ARCHIVE_FOLDER}/news_archive_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
+
+    # Save Excel
+    df.to_excel(filename, index=False)
+
+    # Delete archived news
+    news_collection.delete_many({
+        "createdAt": {"$lt": three_months_ago}
+    })
+
+    # Return file download
+    return FileResponse(
+        filename,
+        filename=os.path.basename(filename),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
     
 # ---------------- Email Helpers ----------------
 def send_welcome_email(email: str, full_name: str):
