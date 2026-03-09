@@ -762,6 +762,24 @@ def get_all_news(limit: int = 1000):
     for n in news:
         n["_id"] = str(n["_id"])
     return {"count": len(news), "articles": news}
+
+@news_router.get("/admin/published-news")
+def get_admin_published_news(limit: int = 200):
+
+    news = list(
+        news_collection.find({"source": "Admin"})
+        .sort("createdAt", -1)
+        .limit(limit)
+    )
+
+    for n in news:
+        n["_id"] = str(n["_id"])
+
+    return {
+        "status": "success",
+        "count": len(news),
+        "articles": news
+    }
     
 @news_router.get("/refresh")
 def refresh_news(secret: str = Query(...)):
@@ -823,6 +841,7 @@ async def publish_news(
             "category": category,
             "language": language,
             "source": source,
+            "verified_by_admin": True, 
             "image": image_url,
             "publishedAt": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
             "views": 0,
