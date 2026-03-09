@@ -41,10 +41,28 @@ def utc_now():
 def utc_now_iso():
     return datetime.utcnow().isoformat()
 
+
 def to_ist(dt):
-    if not dt:
+
+    if dt is None:
         return None
-    return dt.replace(tzinfo=pytz.utc).astimezone(IST).strftime("%Y-%m-%d %H:%M:%S")
+
+    # if string convert to datetime
+    if isinstance(dt, str):
+        try:
+            dt = datetime.strptime(dt, "%Y-%m-%d %H:%M:%S")
+        except:
+            return dt
+
+    # if already datetime
+    if isinstance(dt, datetime):
+        if dt.tzinfo is None:
+            dt = pytz.utc.localize(dt)
+
+        return dt.astimezone(IST).strftime("%Y-%m-%d %H:%M:%S")
+
+    return dt
+    
 # ---------------- Load environment ----------------
 NEWSDATA_API_KEY = os.getenv("NEWSDATA_API_KEY")
 CRON_SECRET = os.getenv("CRON_SECRET")
