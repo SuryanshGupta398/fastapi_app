@@ -3,6 +3,7 @@ import re
 import requests
 # import pandas as pd
 from datetime import datetime, timedelta
+import pytz
 import random
 # import joblib
 # import numpy as np
@@ -31,6 +32,19 @@ report_router = APIRouter(prefix="/report", tags=["Report"])
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+IST = pytz.timezone("Asia/Kolkata")
+# ---------------- Time Helpers ----------------
+
+def utc_now():
+    return datetime.utcnow()
+
+def utc_now_iso():
+    return datetime.utcnow().isoformat()
+
+def to_ist(dt):
+    if not dt:
+        return None
+    return dt.replace(tzinfo=pytz.utc).astimezone(IST).strftime("%Y-%m-%d %H:%M:%S")
 # ---------------- Load environment ----------------
 NEWSDATA_API_KEY = os.getenv("NEWSDATA_API_KEY")
 CRON_SECRET = os.getenv("CRON_SECRET")
@@ -319,7 +333,7 @@ class ResetPasswordRequest(BaseModel):
 # ---------------- Health Check ----------------
 @app.get("/health")
 def health_check():
-    return {"status": "ok", "time": datetime.utcnow().isoformat(), "model_accuracy": current_accuracy}
+    return {"status": "ok", "time": utc_now_iso(), "model_accuracy": current_accuracy}
 
 @app.head("/health")
 def health_check_head():
@@ -745,6 +759,8 @@ def get_news(language: str = "en", limit: int = 20):
     news = list(news_collection.find({"language": language}).sort("createdAt", -1).limit(limit))
     for n in news:
         n["_id"] = str(n["_id"])
+        n["publishedAt"] = to_ist(n.get("publishedAt"))
+        n["createdAt"] = to_ist(n.get("createdAt"))
     return {"articles": news}
 
 @news_router.get("/category/{category}")
@@ -752,6 +768,8 @@ def get_news_by_category(category: str, language: str = "en", limit: int = 50):
     news = list(news_collection.find({"category": category, "language": language}).sort("createdAt", -1).limit(limit))
     for n in news:
         n["_id"] = str(n["_id"])
+        n["publishedAt"] = to_ist(n.get("publishedAt"))
+        n["createdAt"] = to_ist(n.get("createdAt"))
     return {"count": len(news), "articles": news}
 
 news_collection.create_index([("createdAt", DESCENDING)])
@@ -761,6 +779,8 @@ def get_all_news(limit: int = 1000):
     news = list(news_collection.find().sort("createdAt", DESCENDING).limit(limit))
     for n in news:
         n["_id"] = str(n["_id"])
+        n["publishedAt"] = to_ist(n.get("publishedAt"))
+        n["createdAt"] = to_ist(n.get("createdAt"))
     return {"count": len(news), "articles": news}
 
 @news_router.get("/admin/published-news")
@@ -774,7 +794,9 @@ def get_admin_published_news(limit: int = 200):
 
     for n in news:
         n["_id"] = str(n["_id"])
-
+        n["publishedAt"] = to_ist(n.get("publishedAt"))
+        n["createdAt"] = to_ist(n.get("createdAt"))
+        
     return {
         "status": "success",
         "count": len(news),
@@ -843,11 +865,11 @@ async def publish_news(
             "source": source,
             "verified_by_admin": True, 
             "image": image_url,
-            "publishedAt": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+            "publishedAt": utc_now(),
             "views": 0,
             "shares": 0,
             "likes": 0,
-            "createdAt": datetime.utcnow()
+            "createdAt": utc_now()
         }
 
         result = news_collection.insert_one(news_doc)
@@ -911,6 +933,8 @@ def get_smart_trending_news(limit: int = 100):
 
             n["trending_score"] = round(trending_score, 2)
             n["_id"] = str(n["_id"])
+            n["publishedAt"] = to_ist(n.get("publishedAt"))
+            n["createdAt"] = to_ist(n.get("createdAt"))
             trending.append(n)
 
         # Sort and limit
@@ -1033,9 +1057,10 @@ def traveller_updates(location: str = Query(..., description="City or country na
         }).sort("createdAt", -1)
 
         results = list(cursor)
-        for n in results:
+        for n in news:
             n["_id"] = str(n["_id"])
-
+            n["publishedAt"] = to_ist(n.get("publishedAt"))
+            n["createdAt"] = to_ist(n.get("createdAt"))
         if not results:
             return {
                 "status": "not_found",
@@ -1107,6 +1132,8 @@ def travel_route_updates(
         results = list(cursor)
         for r in results:
             r["_id"] = str(r["_id"])
+            r["publishedAt"] = to_ist(r.get("publishedAt"))
+            r["createdAt"] = to_ist(r.get("createdAt"))
 
         # 3️⃣ Handle no results
         if not results:
@@ -1164,7 +1191,7 @@ async def report_misinformation(
         <p><b>Reporter Email:</b> {email}</p>
         <p><b>News Link:</b> {link or 'No link provided'}</p>
         <p><b>Reason:</b> {reason}</p>
-        <p><i>🕓 Reported at: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC</i></p>
+        <p><i>🕓 Reported at: {datetime.now(IST).strftime('%Y-%m-%d %H:%M:%S')} UTC</i></p>
         """
 
         background_tasks.add_task(
