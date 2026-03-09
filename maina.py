@@ -76,8 +76,11 @@ if not os.path.exists(UPLOAD_FOLDER):
 
 BASE_URL = os.getenv("BASE_URL", "https://fastapi-app-jbug.onrender.com")
 
-ARCHIVE_FOLDER = "archives"
-os.makedirs(ARCHIVE_FOLDER, exist_ok=True)
+ARCHIVE_FOLDER = "archive"
+
+if not os.path.exists(ARCHIVE_FOLDER):
+    os.makedirs(ARCHIVE_FOLDER)
+    
 # # ---------------- ML model paths ----------------
 # MODEL_PATH = "full_news_model.pkl"
 # VECTORIZER_PATH = "full_tfidf_vectorizer.pkl"
@@ -366,7 +369,7 @@ def test_delete_email():
     send_account_deleted_email("guptajisuryansh286@gmail.com", "Test User")
     return {"message": "Test email sent"}
 
-@router.get("/admin/archive-old-news")
+@user_router.get("/admin/archive-old-news")
 async def archive_old_news():
 
     # Calculate 3 months old date
@@ -394,9 +397,9 @@ async def archive_old_news():
     df.to_excel(filename, index=False)
 
     # Delete archived news
-    news_collection.delete_many({
-        "createdAt": {"$lt": three_months_ago}
-    })
+    # news_collection.delete_many({
+        # "createdAt": {"$lt": three_months_ago}
+    # })
 
     # Return file download
     return FileResponse(
