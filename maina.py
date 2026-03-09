@@ -942,9 +942,9 @@ async def publish_news(
             "verified_by_admin": True, 
             "image": image_url,
             "publishedAt": utc_now(),
-            "views": 0,
-            "shares": 0,
-            "likes": 0,
+            "views": 100,
+            "shares": 100,
+            "likes": 100,
             "createdAt": utc_now()
         }
 
@@ -1133,7 +1133,7 @@ def traveller_updates(location: str = Query(..., description="City or country na
         }).sort("createdAt", -1)
 
         results = list(cursor)
-        for n in news:
+        for n in results:
             n["_id"] = str(n["_id"])
             n["publishedAt"] = to_ist(n.get("publishedAt"))
             n["createdAt"] = to_ist(n.get("createdAt"))
