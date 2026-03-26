@@ -359,7 +359,7 @@ class ResetPasswordRequest(BaseModel):
 # ---------------- Health Check ----------------
 @app.get("/health")
 def health_check():
-    return {"status": "ok", "time": utc_now_iso(), "model_accuracy": current_accuracy}
+    return {"status": "ok", "time": utc_now_iso()}
 
 @app.head("/health")
 def health_check_head():
