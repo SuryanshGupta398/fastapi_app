@@ -720,6 +720,18 @@ def remove_duplicates(articles):
         unique_articles.append(a)
     return unique_articles
 
+def run_news_refresh():
+    try:
+        print("🚀 Cron job started")
+
+        fetch_and_store_news("en")
+        fetch_and_store_news("hi")
+
+        print("✅ Cron job completed")
+
+    except Exception as e:
+        print("❌ Cron job error:", e)
+        
 def fetch_and_store_news(lang="en", pages=2):
     """
     Fetch news from both NewsData.io and GNews, merge, deduplicate, and store.
@@ -878,30 +890,39 @@ def get_admin_published_news(limit: int = 200):
         "count": len(news),
         "articles": news
     }
-    
+
 @news_router.get("/refresh")
-def refresh_news(secret: str = Query(...)):
+def refresh_news(background_tasks: BackgroundTasks, secret: str = Query(...)):
     if secret != CRON_SECRET:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-    fetch_and_store_news("en")
-    fetch_and_store_news("hi")
+    background_tasks.add_task(run_news_refresh)
 
-    news_docs = list(news_collection.find({"category": {"$exists": True}}))
-    # if news_docs:
-    #     X_test = [doc["title"] for doc in news_docs]
-    #     y_true_str = [doc["category"] for doc in news_docs]
-    #     X_vec = vectorizer.transform(X_test)
-    #     y_true_int = label_encoder.transform(y_true_str)
-    #     y_pred_int = model.predict(X_vec)
-    #     accuracy = round(accuracy_score(y_true_int, y_pred_int) * 100, 2)
-    # else:
-    accuracy = 0.0
+    return {"status": "started", "message": "News fetching started in background"}
+    
+# @news_router.get("/refresh")
+# def refresh_news(secret: str = Query(...)):
+#     if secret != CRON_SECRET:
+#         raise HTTPException(status_code=401, detail="Unauthorized")
 
-    global current_accuracy
-    current_accuracy = accuracy
+#     fetch_and_store_news("en")
+#     fetch_and_store_news("hi")
 
-    return {"status": "success", "message": "News fetched & model improved", "accuracy": accuracy}
+#     news_docs = list(news_collection.find({"category": {"$exists": True}}))
+#     # if news_docs:
+#     #     X_test = [doc["title"] for doc in news_docs]
+#     #     y_true_str = [doc["category"] for doc in news_docs]
+#     #     X_vec = vectorizer.transform(X_test)
+#     #     y_true_int = label_encoder.transform(y_true_str)
+#     #     y_pred_int = model.predict(X_vec)
+#     #     accuracy = round(accuracy_score(y_true_int, y_pred_int) * 100, 2)
+#     # else:
+#     accuracy = 0.0
+
+#     global current_accuracy
+#     current_accuracy = accuracy
+
+#     return {"status": "success", "message": "News fetched & model improved", "accuracy": accuracy}
 
 @news_router.post("/admin/publish-news")
 async def publish_news(
